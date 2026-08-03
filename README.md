@@ -8,36 +8,35 @@ che il motore carica.
 Il catalogo segue la [specifica aperta Agent Skills](https://agentskills.io/specification) ed è
 installabile tramite il [CLI `skills`](https://github.com/vercel-labs/skills).
 
-## Iniziare subito
+## Installazione
 
-Il comando `skills add` riceve come argomento la sorgente da cui scoprire e installare le skill.
-La sorgente può essere un repository GitHub, un URL Git o una cartella locale.
+```sh
+npx skills@latest add tosdan/mockxy-skills --skill '*' --global
+```
 
-La sorgente GitHub di questo catalogo è `tosdan/mockxy-skills`.
+È il modo consigliato: `--skill '*'` installa tutte e quattro le skill del catalogo, `--global` le
+rende disponibili a livello utente anziché nel solo progetto corrente. Skill e ambito sono già
+scelti, quindi il CLI chiede soltanto **per quali agenti** installarle.
 
-### Esplorare il catalogo
+Le quattro skill sono pensate per lavorare insieme e un endpoint completo nasce quasi sempre da
+due di esse (vedi [Come si combinano](#come-si-combinano)): installarle tutte evita che l'agente
+si trovi con metà del formato.
 
-Per vedere le skill disponibili senza installare nulla:
+## Altre opzioni
+
+Il comando `skills add` riceve come argomento la sorgente da cui scoprire e installare le skill:
+un repository GitHub, un URL Git o una cartella locale. La sorgente GitHub di questo catalogo è
+`tosdan/mockxy-skills`.
+
+### Esplorare il catalogo senza installare
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --list
 ```
 
-### Installazione interattiva
+### Installare solo nel progetto corrente
 
-Per avviare il flusso guidato:
-
-```sh
-npx skills@latest add tosdan/mockxy-skills
-```
-
-Il CLI analizza il repository, mostra le skill disponibili e permette di scegliere quali
-installare. In base agli agenti rilevati può inoltre chiedere le destinazioni e il metodo di
-installazione. Senza `--global`, l'installazione è associata al progetto corrente.
-
-### Installare tutto il catalogo
-
-Le quattro skill sono pensate per lavorare insieme: l'installazione consigliata le prende tutte.
+Basta togliere `--global`:
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --skill '*'
@@ -46,27 +45,26 @@ npx skills@latest add tosdan/mockxy-skills --skill '*'
 ### Installare una skill specifica
 
 ```sh
-npx skills@latest add tosdan/mockxy-skills --skill mockxy-workspace
+npx skills@latest add tosdan/mockxy-skills --skill mockxy-workspace --global
 ```
 
-### Scegliere agente e ambito
+### Indicare l'agente sulla riga di comando
 
-`--agent` indica l'agente di destinazione. `--global` rende la skill disponibile a livello utente,
-anziché soltanto nel progetto corrente.
+`--agent` salta anche la domanda sugli agenti:
 
 ```sh
-npx skills@latest add tosdan/mockxy-skills --skill '*' --agent claude-code --global
+npx skills@latest add tosdan/mockxy-skills --skill '*' --global --agent claude-code
 ```
 
 Altri identificativi supportati includono, per esempio, `codex`, `cursor` e `opencode`.
 
 ### Installazione non interattiva
 
-`--yes` accetta automaticamente le conferme. È utile negli script e nei flussi in cui skill,
-agente e ambito sono già stati scelti esplicitamente:
+`--yes` accetta automaticamente le conferme residue. È utile negli script e nei flussi in cui
+skill, agente e ambito sono già stati scelti esplicitamente:
 
 ```sh
-npx skills@latest add tosdan/mockxy-skills --skill '*' --agent codex --global --yes
+npx skills@latest add tosdan/mockxy-skills --skill '*' --global --agent codex --yes
 ```
 
 ### Usare un checkout locale
@@ -77,8 +75,8 @@ Dalla radice di questo repository, usare `.` come sorgente:
 # Elenca le skill locali senza installarle
 npx skills@latest add . --list
 
-# Avvia l'installazione interattiva dal catalogo locale
-npx skills@latest add .
+# Installa il catalogo locale
+npx skills@latest add . --skill '*' --global
 ```
 
 ## Catalogo
