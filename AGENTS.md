@@ -16,12 +16,24 @@ workspaces.
 - Do not place templates or incomplete skills under `skills/`, because the CLI may discover and
   publish them.
 
+## The two READMEs
+
+- `README.md` is the official one and is written in **English**; `README.it.md` is its **Italian**
+  translation. The project is public, so English comes first and the Italian link stays visible at
+  the top of both files.
+- Change them **together**: a pull request touching one and not the other is incomplete. Keep the
+  same section order, so the two files stay diffable side by side.
+- Keep the language badges (`lang-eng.svg`, `lang-ita.svg`) at the head of both files, pointing at
+  `README.md` and `README.it.md`.
+- Anchors differ between the two languages: check that in-page links resolve in the file they
+  belong to.
+
 ## SKILL.md
 
 - Follow the Agent Skills specification at https://agentskills.io/specification.
 - Use lowercase kebab-case for the directory and `name`; they must match.
 - Make `description` state both what the skill does and when it should trigger.
-- Write `SKILL.md` and `references/` in English; the repository `README.md` is in Italian.
+- Write `SKILL.md` and `references/` in English.
 - Keep instructions portable across agents. Isolate agent-specific behavior and document it
   explicitly when it cannot be avoided.
 - Keep `SKILL.md` concise: it holds the workflow and the minimum format an agent needs to write a

@@ -1,182 +1,194 @@
-# Skill per creare mock Mockxy
+<div align="center">
 
-Catalogo di Agent Skill che insegnano a un agente AI il formato dei workspace
-[Mockxy](https://github.com/tosdan/mockxy): indicandogli il percorso di un workspace, l'agente sa
-comporre endpoint, varianti di risposta, handler, middleware e stream perfettamente conformi a ciò
-che il motore carica.
+# Mockxy Skills
 
-Il catalogo segue la [specifica aperta Agent Skills](https://agentskills.io/specification) ed è
-installabile tramite il [CLI `skills`](https://github.com/vercel-labs/skills).
+[![en](lang-eng.svg)](README.md)
+[![it](lang-ita.svg)](README.it.md)
 
-## Installazione
+**Skills for AI agents that author mocks in the [Mockxy](https://github.com/tosdan/mockxy) workspace format.**
+
+![MIT license](https://img.shields.io/badge/license-MIT-blue)
+![Agent Skills](https://img.shields.io/badge/agent%20skills-4-7c9d8e)
+
+</div>
+
+---
+
+Give an agent the path of a Mockxy workspace and it will compose endpoints, response variants,
+handlers, middleware and streams that match exactly what the engine loads.
+
+The catalog follows the [open Agent Skills specification](https://agentskills.io/specification)
+and installs through the [`skills` CLI](https://github.com/vercel-labs/skills).
+
+## Install
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --skill '*' --global
 ```
 
-È il modo consigliato: `--skill '*'` installa tutte e quattro le skill del catalogo, `--global` le
-rende disponibili a livello utente anziché nel solo progetto corrente. Skill e ambito sono già
-scelti, quindi il CLI chiede soltanto **per quali agenti** installarle.
+This is the recommended way: `--skill '*'` installs all four skills of the catalog, `--global`
+makes them available user-wide instead of in the current project only. Skill and scope are already
+chosen, so the CLI only asks **which agents** to install them for.
 
-Le quattro skill sono pensate per lavorare insieme e un endpoint completo nasce quasi sempre da
-due di esse (vedi [Come si combinano](#come-si-combinano)): installarle tutte evita che l'agente
-si trovi con metà del formato.
+The four skills are meant to work together, and a complete endpoint almost always comes from two
+of them (see [How they combine](#how-they-combine)): installing all of them keeps the agent from
+holding half the format.
 
-## Altre opzioni
+## Other options
 
-Il comando `skills add` riceve come argomento la sorgente da cui scoprire e installare le skill:
-un repository GitHub, un URL Git o una cartella locale. La sorgente GitHub di questo catalogo è
+`skills add` takes as its argument the source to discover and install skills from: a GitHub
+repository, a Git URL or a local folder. The GitHub source of this catalog is
 `tosdan/mockxy-skills`.
 
-### Esplorare il catalogo senza installare
+### Browse the catalog without installing
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --list
 ```
 
-### Installare solo nel progetto corrente
+### Install into the current project only
 
-Basta togliere `--global`:
+Just drop `--global`:
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --skill '*'
 ```
 
-### Installare una skill specifica
+### Install a single skill
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --skill mockxy-workspace --global
 ```
 
-### Indicare l'agente sulla riga di comando
+### Pick the agent on the command line
 
-`--agent` salta anche la domanda sugli agenti:
+`--agent` also skips the question about agents:
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --skill '*' --global --agent claude-code
 ```
 
-Altri identificativi supportati includono, per esempio, `codex`, `cursor` e `opencode`.
+Other supported identifiers include, for example, `codex`, `cursor` and `opencode`.
 
-### Installazione non interattiva
+### Non-interactive install
 
-`--yes` accetta automaticamente le conferme residue. È utile negli script e nei flussi in cui
-skill, agente e ambito sono già stati scelti esplicitamente:
+`--yes` accepts the remaining confirmations automatically. Useful in scripts and in flows where
+skill, agent and scope have already been chosen explicitly:
 
 ```sh
 npx skills@latest add tosdan/mockxy-skills --skill '*' --global --agent codex --yes
 ```
 
-### Usare un checkout locale
+### Use a local checkout
 
-Dalla radice di questo repository, usare `.` come sorgente:
+From the root of this repository, use `.` as the source:
 
 ```sh
-# Elenca le skill locali senza installarle
+# List the local skills without installing them
 npx skills@latest add . --list
 
-# Installa il catalogo locale
+# Install the local catalog
 npx skills@latest add . --skill '*' --global
 ```
 
-## Catalogo
+## The catalog
 
-Tutte le skill usano il prefisso `mockxy-`: è lo spazio dei nomi del catalogo e serve a non
-entrare in conflitto con skill installate da altre sorgenti.
+Every skill carries the `mockxy-` prefix: it is the catalog's namespace and keeps these skills from
+colliding with skills installed from other sources.
 
 ### `mockxy-workspace`
 
-La skill di ingresso. Riconosce e inizializza un workspace, conosce la struttura delle cartelle e
-il formato del **file endpoint** (metodo, percorso, varianti disponibili, variante selezionata,
-sequenze), la convenzione dei percorsi, l'organizzazione del catalogo in collezioni e l'admin API.
-Include `scripts/validate-workspace.js`, il validatore che ricalca i controlli del motore Mockxy.
+The entry-point skill. It recognizes and initializes a workspace, and owns the folder layout and
+the **endpoint file** format (method, path, available variants, selected variant, sequences), the
+path convention, the catalog's organization into collections and the admin API. It ships
+`scripts/validate-workspace.js`, the validator that mirrors the Mockxy engine's own checks.
 
 ```text
-Usa $mockxy-workspace per ispezionare il workspace in D:\progetti\mio-workspace, aggiungere
-l'endpoint GET /api/ordini/:id e validare il risultato.
+Use $mockxy-workspace to inspect the workspace in ~/projects/my-workspace, add the
+GET /api/orders/:id endpoint and validate the result.
 ```
 
 ### `mockxy-static-mock`
 
-Varianti di risposta statiche: status, header, body JSON o testuale, payload binari da file,
-ritardo simulato, templating dei placeholder `{{...}}` e sequenze che fanno evolvere la risposta
-nel tempo. Copre anche i filtri e la paginazione automatici sulle liste.
+Static response variants: status, headers, JSON or text body, binary file payloads, simulated
+delay, `{{...}}` placeholder templating, and sequences that make the answer evolve over time. It
+also covers the automatic filters and pagination on list bodies.
 
 ```text
-Usa $mockxy-static-mock per creare l'endpoint GET /api/utenti con tre varianti: lista piena,
-lista vuota e errore 500.
+Use $mockxy-static-mock to create the GET /api/users endpoint with three variants: full list,
+empty list and a 500 error.
 ```
 
 ### `mockxy-dynamic-mock`
 
-Handler e middleware: script JavaScript locali che calcolano la risposta o trasformano quella del
-backend reale, più i file dati JSON che leggono tramite `data()`.
+Handlers and middleware: local JavaScript scripts that compute the response or transform the real
+backend's one, plus the JSON data files they read through `data()`.
 
 ```text
-Usa $mockxy-dynamic-mock per scrivere un handler su GET /api/utenti/:id che cerca l'utente nel
-file dati e risponde 404 quando non esiste.
+Use $mockxy-dynamic-mock to write a handler on GET /api/users/:id that looks the user up in the
+data file and answers 404 when it does not exist.
 ```
 
 ### `mockxy-realtime-mock`
 
-Varianti in streaming: Server-Sent Events e canali WebSocket mockati, con copione dei messaggi,
-regole di risposta dichiarative, comportamento a fine copione e preset della console.
+Streaming variants: Server-Sent Events and mocked WebSocket channels, with their message scripts,
+declarative reply rules, end-of-script behavior and console presets.
 
 ```text
-Usa $mockxy-realtime-mock per creare uno stream SSE su /api/eventi che emette tre eventi di
-avanzamento e poi resta aperto.
+Use $mockxy-realtime-mock to create an SSE stream on /api/events that emits three progress events
+and then stays open.
 ```
 
-### Come si combinano
+### How they combine
 
-`mockxy-workspace` possiede il file endpoint ed è il punto di partenza; le altre tre possiedono il
-contenuto delle varianti. Un endpoint completo nasce quasi sempre da due skill: una per il file
-endpoint, una per la variante. Ogni skill resta comunque utilizzabile da sola.
+`mockxy-workspace` owns the endpoint file and is the starting point; the other three own the
+content of the variants. A complete endpoint almost always comes from two skills: one for the
+endpoint file, one for the variant. Each skill remains usable on its own.
 
-## Validare un workspace
+## Validating a workspace
 
-Il validatore incluso in `mockxy-workspace` ricalca i controlli che il motore Mockxy esegue al
-caricamento, così un errore di formato emerge subito invece di far sparire silenziosamente un
-endpoint:
+The validator shipped with `mockxy-workspace` mirrors the checks the Mockxy engine performs while
+loading, so a format error shows up immediately instead of silently making an endpoint disappear:
 
 ```sh
-node skills/mockxy-workspace/scripts/validate-workspace.js /percorso/del/workspace
+node skills/mockxy-workspace/scripts/validate-workspace.js /path/to/workspace
 ```
 
-Accetta la radice del workspace o direttamente una cartella `mocks/`. Opzioni: `--json` per un
-report leggibile da programma, `--no-scripts` per non caricare i sorgenti di handler e middleware,
-`--quiet` per il solo riepilogo. Esce con codice 1 quando trova errori.
+It accepts the workspace root or a `mocks/` folder directly. Options: `--json` for a
+machine-readable report, `--no-scripts` to skip loading handler and middleware sources, `--quiet`
+for the summary only. It exits with 1 when it finds errors.
 
-## Struttura del repository
+## Repository layout
 
 ```text
 skills/
-  mockxy-<nome-skill>/
+  mockxy-<skill-name>/
     SKILL.md
-    agents/        # metadati opzionali per gli agenti
-    scripts/       # strumenti eseguibili opzionali
-    references/    # documentazione opzionale caricata quando serve
-    assets/        # template e risorse statiche opzionali
+    agents/        # optional agent metadata
+    scripts/       # optional executable tools
+    references/    # optional documentation loaded on demand
+    assets/        # optional templates and static resources
 ```
 
-Ogni skill è autosufficiente: non legge file appartenenti a un'altra skill, perché l'utente può
-installarle singolarmente. Il nome della cartella e il campo `name` del suo `SKILL.md` devono
-coincidere, usare il formato kebab-case minuscolo e cominciare con `mockxy-`.
+Every skill is self-contained: it never reads files belonging to another skill, because users may
+install them individually. The folder name and the `name` field of its `SKILL.md` must match, use
+lowercase kebab-case, and start with `mockxy-`.
 
-I `SKILL.md` e le `references/` sono in inglese, per portabilità tra agenti; questo README è in
-italiano.
+`SKILL.md` files and `references/` are written in English, for portability across agents. This
+README is the official one; [README.it.md](README.it.md) is its Italian translation, and the two
+versions are updated together.
 
-## Contribuire
+## Contributing
 
-Le linee guida per chi modifica il catalogo sono in [AGENTS.md](AGENTS.md). In sintesi: il formato
-documentato deve rispecchiare ciò che il motore Mockxy carica davvero, il validatore va eseguito
-su un workspace reale prima di ogni commit, e prima di creare un commit va verificato che il CLI
-scopra tutte e sole le skill previste:
+The guidelines for anyone changing the catalog live in [AGENTS.md](AGENTS.md). In short: the
+documented format must mirror what the Mockxy engine actually loads, the validator must be run
+against a real workspace before committing, and before creating a commit you must confirm that the
+CLI discovers all the intended skills and nothing else:
 
 ```sh
 npx skills@latest add . --list
 ```
 
-## Licenza
+## License
 
 [MIT](LICENSE).
