@@ -1,0 +1,23 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+
+# Common generated files
+node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

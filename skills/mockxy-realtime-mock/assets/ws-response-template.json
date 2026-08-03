@@ -1,0 +1,10 @@
+{
+  "type": "ws",
+  "title": "",
+  "script": [
+    { "afterMs": 0, "data": {} }
+  ],
+  "onEnd": "keep-open",
+  "rules": [],
+  "presets": []
+}

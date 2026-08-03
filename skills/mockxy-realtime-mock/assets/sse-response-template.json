@@ -1,0 +1,9 @@
+{
+  "type": "sse",
+  "title": "",
+  "script": [
+    { "afterMs": 0, "event": "message", "data": {} }
+  ],
+  "onEnd": "keep-open",
+  "presets": []
+}

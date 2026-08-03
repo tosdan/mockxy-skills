@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mockxy Realtime Mock"
+  short_description: "Varianti SSE e WebSocket di un workspace Mockxy"
+  default_prompt: "Usa $mockxy-realtime-mock per creare nel workspace Mockxy che ti indico un endpoint che trasmette gli eventi che ti descrivo."

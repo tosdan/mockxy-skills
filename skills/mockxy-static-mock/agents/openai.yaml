@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mockxy Static Mock"
+  short_description: "Risposte statiche, templating e sequenze di varianti"
+  default_prompt: "Usa $mockxy-static-mock per creare nel workspace Mockxy che ti indico un endpoint con le varianti di risposta statiche che ti descrivo."

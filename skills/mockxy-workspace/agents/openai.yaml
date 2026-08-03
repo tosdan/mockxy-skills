@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mockxy Workspace"
+  short_description: "Crea, ispeziona e valida un workspace Mockxy"
+  default_prompt: "Usa $mockxy-workspace per ispezionare il workspace Mockxy che ti indico, aggiungere gli endpoint richiesti e validare il risultato."
