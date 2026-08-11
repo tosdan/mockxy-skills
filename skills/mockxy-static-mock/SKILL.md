@@ -105,22 +105,25 @@ handler. Templating is not allowed on `file` payloads —
 
 ## Answers that change over time
 
-For a polling client that must see `processing` and then `completed`, declare a `sequence` in the
-**endpoint file** over variants that already exist:
+For a polling client that must see `processing` and then `completed`, add a response variant with
+`type: "sequence"` over variants that already exist, then select its filename in the endpoint:
 
 ```json
 {
-  "sequence": {
-    "enabled": true,
-    "steps": [
-      { "response": "001.response.json", "times": 3 },
-      { "response": "002.response.json" }
-    ],
-    "onEnd": "stay",
-    "resetAfterMs": 30000
-  }
+  "type": "sequence",
+  "title": "Processing then completed",
+  "steps": [
+    { "response": "001.response.json", "times": 3 },
+    { "response": "002.response.json" }
+  ],
+  "onEnd": "stay",
+  "resetAfterMs": 30000
 }
 ```
+
+Save it as (for example) `003.response.json`, append that filename to `responseFiles`, and set
+`selectedResponseFile` to it. There is no sequence `enabled` toggle: selecting an ordinary
+response deactivates the scenario while keeping the sequence variant available.
 
 At least 2 steps; each step declares at most one of `times` (number of requests) or `forMs`
 (milliseconds since its own first request); only the last step may omit it, unless
@@ -129,10 +132,12 @@ At least 2 steps; each step declares at most one of `times` (number of requests)
 
 ## Before reporting the work done
 
-- `type` is `"mock"` and `status` is an integer in 100–599.
-- Exactly one of `body` and `file` is present.
-- A string `body` carries an explicit `content-type` header.
-- Headers are strings, numbers, booleans or arrays of strings — nothing nested.
+- A static response has `type: "mock"`, a `status` integer in 100–599, and exactly one of `body`
+  and `file`.
+- A sequence response has `type: "sequence"`, at least two valid steps, and only `mock` or
+  `handler` targets.
+- A string mock `body` carries an explicit `content-type` header.
+- Mock headers are strings, numbers, booleans or arrays of strings — nothing nested.
 - Every file listed in `responseFiles` exists on disk, and `selectedResponseFile` is one of them.
 - Validate the workspace with the `mockxy-workspace` skill's
   `scripts/validate-workspace.js` and fix every error.

@@ -45,54 +45,20 @@ Windows folder names.
 | `enabled` | yes | boolean. `false` unregisters the endpoint: those requests follow the fallback (proxy to the real backend, or `404` in mock-only mode) |
 | `responseFiles` | yes | non-empty array of plain filenames ending in `.response.json`; no path separators, no duplicates. The order is the one the UI shows |
 | `selectedResponseFile` | yes | the variant currently served; must be listed in `responseFiles` |
-| `sequence` | no | variant sequence, see below |
 
 The redundancy between `method` and the filename is deliberate: the file stays self-describing
 outside its folder.
 
-## The variant sequence
+## Selecting a sequence
 
-For endpoints whose answer must **change over time** — the typical case being a polling client
-that first receives `processing` and then `completed` — the endpoint file can declare a sequence:
-an order of variants with how long each one lasts. It is a selection policy on top of existing
-variants; the payloads stay in the normal response files.
+A sequence is a regular response file with `"type": "sequence"`, listed in `responseFiles` like
+every other variant. `selectedResponseFile` is its only activation switch: select the sequence
+filename to run the scenario, or select an ordinary response to stop it. The endpoint file must
+never contain `sequence`; the loader rejects that legacy field explicitly.
 
-```json
-{
-  "sequence": {
-    "enabled": true,
-    "steps": [
-      { "response": "001.response.json", "times": 3 },
-      { "response": "002.response.json" }
-    ],
-    "onEnd": "stay",
-    "resetAfterMs": 30000
-  }
-}
-```
-
-- `enabled` — optional, default `true`. With `false` the definition stays in the file but the
-  classic `selectedResponseFile` selection applies. `selectedResponseFile` remains required in
-  every case.
-- `steps` — **at least 2 entries**. Each step references a variant listed in `responseFiles` and
-  declares **at most one** advancement criterion: `times` (answers N requests, integer ≥ 1) or
-  `forMs` (answers for N milliseconds **from its own first request**, not from the server clock).
-  The last step may omit the criterion: it is the terminal state. The same variant may appear in
-  several steps.
-- `onEnd` — `"stay"` (default) stops on the last step; `"loop"` restarts from the first, and then
-  **the last step must declare a criterion too**.
-- `resetAfterMs` — optional positive integer: with no request for that long, the next call
-  restarts from the first step.
-
-Steps may reference **`mock` and `handler` variants only**. A `middleware`, `sse` or `ws` variant
-in a step is a validation error.
-
-When a sequence is active the engine loads and validates **every step's variant** at load time, so
-a broken step takes the endpoint down just like a broken selected variant would.
-
-The cursor is runtime state, not a file: it resets on engine restart, on explicit reset (UI or
-admin API), on inactivity (`resetAfterMs`) and when the sequence definition changes. Edits to the
-endpoint file that do not touch the sequence — the description, for instance — do not reset it.
+The sequence response holds its `steps`, `onEnd` and optional `resetAfterMs`. Its steps may target
+only `mock` and `handler` files belonging to the same endpoint. Use the `mockxy-static-mock` skill
+for the complete response format and cursor semantics.
 
 ## Validation and error handling
 
@@ -111,8 +77,8 @@ Two properties worth knowing:
   different folders) conflict — the first one encountered wins, the second is reported and
   ignored.
 
-Variants **not selected** (and not referenced by an active sequence) are not validated until they
-become active: an incomplete variant file can sit in the workspace with no effect.
+Variants **not selected** (and not referenced by the selected sequence response) are not validated
+until they become active: an incomplete variant file can sit in the workspace with no effect.
 
 ## Editing by hand
 

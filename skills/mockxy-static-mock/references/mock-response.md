@@ -2,8 +2,8 @@
 
 Every response variant of an endpoint is a JSON file inside `<METHOD>.responses/`, next to the
 endpoint file, describing *how* to answer when that variant is selected. The `type` field
-distinguishes five natures of response — `mock`, `handler`, `middleware`, `sse`, `ws`. This page
-documents `mock`: a static response described in the file itself.
+distinguishes six natures of response — `mock`, `handler`, `middleware`, `sse`, `ws`, `sequence`.
+This page documents `mock`: a static response described in the file itself.
 
 The UI creates files with progressive names (`001.response.json`, `002.response.json`, …), but any
 name ending in `.response.json` is valid, as long as it is a plain filename (no paths) and is
@@ -88,4 +88,5 @@ reload the last valid version stays in force.
 
 Variants that are **not selected** are not validated until they become active: an incomplete
 variant file can live in the workspace with no effect until someone selects it. The exception is a
-variant referenced by an **active sequence**: those are all loaded and validated eagerly.
+variant referenced by the **selected sequence response**: those are all loaded and validated
+eagerly.
