@@ -99,8 +99,9 @@ colliding with skills installed from other sources.
 ### `mockxy-workspace`
 
 The entry-point skill. It recognizes and initializes a workspace, and owns the folder layout and
-the **endpoint file** format (method, path, available variants, selected variant, sequences), the
-path convention, the catalog's organization into collections and the admin API. It ships
+the **endpoint file** format (method, path, available variants and selected variant), sequence
+selection, the path convention, the catalog's organization into collections and the admin API.
+It ships
 `scripts/validate-workspace.js`, the validator that mirrors the Mockxy engine's own checks.
 
 ```text
@@ -111,8 +112,8 @@ GET /api/orders/:id endpoint and validate the result.
 ### `mockxy-static-mock`
 
 Static response variants: status, headers, JSON or text body, binary file payloads, simulated
-delay, `{{...}}` placeholder templating, and sequences that make the answer evolve over time. It
-also covers the automatic filters and pagination on list bodies.
+delay, `{{...}}` placeholder templating, and selectable `sequence` response variants that make the
+answer evolve over time. It also covers the automatic filters and pagination on list bodies.
 
 ```text
 Use $mockxy-static-mock to create the GET /api/users endpoint with three variants: full list,

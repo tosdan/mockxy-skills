@@ -99,8 +99,9 @@ entrare in conflitto con skill installate da altre sorgenti.
 ### `mockxy-workspace`
 
 La skill di ingresso. Riconosce e inizializza un workspace, conosce la struttura delle cartelle e
-il formato del **file endpoint** (metodo, percorso, varianti disponibili, variante selezionata,
-sequenze), la convenzione dei percorsi, l'organizzazione del catalogo in collezioni e l'admin API.
+il formato del **file endpoint** (metodo, percorso, varianti disponibili e variante selezionata),
+la selezione delle response sequence, la convenzione dei percorsi, l'organizzazione del catalogo
+in collezioni e l'admin API.
 Include `scripts/validate-workspace.js`, il validatore che ricalca i controlli del motore Mockxy.
 
 ```text
@@ -111,8 +112,8 @@ l'endpoint GET /api/ordini/:id e validare il risultato.
 ### `mockxy-static-mock`
 
 Varianti di risposta statiche: status, header, body JSON o testuale, payload binari da file,
-ritardo simulato, templating dei placeholder `{{...}}` e sequenze che fanno evolvere la risposta
-nel tempo. Copre anche i filtri e la paginazione automatici sulle liste.
+ritardo simulato, templating dei placeholder `{{...}}` e varianti `sequence` selezionabili che
+fanno evolvere la risposta nel tempo. Copre anche i filtri e la paginazione automatici sulle liste.
 
 ```text
 Usa $mockxy-static-mock per creare l'endpoint GET /api/utenti con tre varianti: lista piena,

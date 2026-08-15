@@ -69,7 +69,7 @@ their presence in the script is a validation error.
   };
   ```
 
-  For that simple case without writing code there is the variant sequence — see
+  For that simple case without writing code there is a `sequence` response — see
   `mockxy-static-mock`.
 - **`req`** — the raw Express request, for advanced cases. The body stream has already been
   consumed by the buffering: use the three forms above, do not re-read it.

@@ -92,7 +92,7 @@ Middleware works on proxied requests, so a global delay extended to the proxy ap
 
 ## Limits worth knowing before choosing middleware
 
-- A middleware variant **cannot be a step of a variant sequence**.
+- A middleware variant **cannot be a step of a `sequence` response**.
 - It needs a reachable backend; in mock-only mode it has nothing to transform.
 - If the goal is a fully synthetic response, a handler is simpler and does not depend on the
   backend being up.

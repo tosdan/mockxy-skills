@@ -68,7 +68,7 @@ They are the console's macros; they never fire on their own.
   direction (broadcast to every connection). Via API: `POST /_admin/api/mocks/:id/sse/push` and
   `GET /_admin/api/mocks/:id/sse/connections`.
 - The monitor entry is created when the connection closes.
-- An `sse` variant **cannot be a step of a variant sequence**.
+- An `sse` variant **cannot be a step of a `sequence` response**.
 - A proxy middleware never transforms a declared `text/event-stream`: buffering a stream that
   never ends would hang the request.
 

@@ -19,9 +19,9 @@
 //
 // Exit code is 1 when at least one error is found, 0 otherwise.
 //
-// Severity follows the engine: a broken *selected* variant (or a variant referenced by an active
-// sequence) takes the endpoint down, so it is an error; a broken variant nobody selected is
-// inert until someone selects it, so it is a warning.
+// Severity follows the engine: a broken *selected* variant (or a variant referenced by the
+// selected sequence response) takes the endpoint down, so it is an error; a broken variant nobody
+// selected is inert until someone selects it, so it is a warning.
 
 const fs = require("fs");
 const path = require("path");
@@ -34,7 +34,7 @@ const DATA_FILE_NAME_PATTERN = /^[a-z0-9._-]+\.json$/;
 const RESERVED_QUERY_FOLDER_CHAR = "^";
 const SEQUENCE_ON_END_VALUES = new Set(["stay", "loop"]);
 const STREAM_ON_END_VALUES = new Set(["keep-open", "close", "loop"]);
-const RESPONSE_TYPES = new Set(["mock", "handler", "middleware", "sse", "ws"]);
+const RESPONSE_TYPES = new Set(["mock", "handler", "middleware", "sse", "ws", "sequence"]);
 
 // ---------------------------------------------------------------------------
 // Findings
@@ -163,18 +163,14 @@ function validatePathFormat(routePath, errors) {
 // ---------------------------------------------------------------------------
 
 function validateSequence(sequence, responseFiles, errors) {
-  if (sequence == null) {
-    return null;
-  }
   if (!isPlainObject(sequence)) {
-    errors.push("sequence must be an object");
-    return null;
+    errors.push("sequence response must be an object");
+    return { stepResponses: [] };
   }
 
-  if (sequence.enabled != null && typeof sequence.enabled !== "boolean") {
-    errors.push("sequence.enabled must be a boolean");
+  if (Object.prototype.hasOwnProperty.call(sequence, "enabled")) {
+    errors.push("sequence.enabled is not supported; select the sequence response to activate it");
   }
-  const enabled = sequence.enabled !== false;
 
   const onEnd = sequence.onEnd == null ? "stay" : sequence.onEnd;
   if (!SEQUENCE_ON_END_VALUES.has(onEnd)) {
@@ -189,7 +185,7 @@ function validateSequence(sequence, responseFiles, errors) {
   const stepResponses = [];
   if (!Array.isArray(sequence.steps) || sequence.steps.length < 2) {
     errors.push("sequence.steps must be an array with at least 2 steps");
-    return { enabled, stepResponses };
+    return { stepResponses };
   }
 
   sequence.steps.forEach((step, index) => {
@@ -226,7 +222,7 @@ function validateSequence(sequence, responseFiles, errors) {
     }
   });
 
-  return { enabled, stepResponses };
+  return { stepResponses };
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +279,9 @@ function validateEndpointConfig(endpoint, endpointFilePath, errors) {
     errors.push("selectedResponseFile must be listed in responseFiles");
   }
 
-  const sequence = validateSequence(endpoint.sequence, [...seenResponseFiles], errors);
+  if (Object.prototype.hasOwnProperty.call(endpoint, "sequence")) {
+    errors.push("endpoint.sequence is no longer supported; migrate it to a response with type sequence");
+  }
 
   return {
     method: HTTP_METHOD_PATTERN.test(method) ? method : fileMethod,
@@ -291,7 +289,6 @@ function validateEndpointConfig(endpoint, endpointFilePath, errors) {
     enabled: endpoint.enabled === true,
     responseFiles: [...seenResponseFiles],
     selectedResponseFile: endpoint.selectedResponseFile,
-    sequence,
   };
 }
 
@@ -529,7 +526,7 @@ function validateScriptVariant(response, responseDir, type, errors, options) {
 }
 
 // Validates one response file and returns its declared type plus the script source path, if any.
-function validateResponseFile(responsePath, responseDir, options) {
+function validateResponseFile(responsePath, responseDir, responseFiles, options) {
   const errors = [];
   const parsed = readJson(responsePath);
   if (parsed.parseError != null) {
@@ -544,13 +541,16 @@ function validateResponseFile(responsePath, responseDir, options) {
     errors.push("title must be a string when provided");
   }
   if (!RESPONSE_TYPES.has(response.type)) {
-    errors.push("type must be mock, handler, middleware, sse or ws");
-    return { errors, type: null, sourcePath: null };
+    errors.push("type must be mock, handler, middleware, sse, ws or sequence");
+    return { errors, type: null, sourcePath: null, stepResponses: [] };
   }
 
   let sourcePath = null;
+  let stepResponses = [];
   if (response.type === "mock") {
     validateMockVariant(response, responseDir, errors);
+  } else if (response.type === "sequence") {
+    stepResponses = validateSequence(response, responseFiles, errors).stepResponses;
   } else if (response.type === "sse") {
     validateSseVariant(response, errors);
   } else if (response.type === "ws") {
@@ -559,7 +559,7 @@ function validateResponseFile(responsePath, responseDir, options) {
     sourcePath = validateScriptVariant(response, responseDir, response.type, errors, options);
   }
 
-  return { errors, type: response.type, sourcePath };
+  return { errors, type: response.type, sourcePath, stepResponses };
 }
 
 // ---------------------------------------------------------------------------
@@ -646,15 +646,29 @@ function validateEndpoints(mocksDir, options) {
       continue;
     }
 
-    // Variants the engine loads eagerly: the selected one, plus every step of an active sequence.
+    // The selected response is always critical. When it is a sequence, its whole step graph is
+    // critical too: the runtime resolves and validates every target before installing the route.
     const criticalVariants = new Set();
-    const sequenceActive = endpoint.sequence != null && endpoint.sequence.enabled;
-    if (sequenceActive) {
-      for (const stepResponse of endpoint.sequence.stepResponses) {
-        criticalVariants.add(stepResponse);
-      }
-    } else if (typeof endpoint.selectedResponseFile === "string") {
+    const sequenceStepVariants = new Set();
+    const responseResults = new Map();
+    if (typeof endpoint.selectedResponseFile === "string") {
       criticalVariants.add(endpoint.selectedResponseFile);
+      const selectedResponsePath = path.join(responseDir, endpoint.selectedResponseFile);
+      if (exists(selectedResponsePath)) {
+        const selectedResult = validateResponseFile(
+          selectedResponsePath,
+          responseDir,
+          endpoint.responseFiles,
+          options
+        );
+        responseResults.set(endpoint.selectedResponseFile, selectedResult);
+        if (selectedResult.type === "sequence") {
+          for (const stepResponse of selectedResult.stepResponses) {
+            criticalVariants.add(stepResponse);
+            sequenceStepVariants.add(stepResponse);
+          }
+        }
+      }
     }
 
     for (const responseFileName of endpoint.responseFiles) {
@@ -668,14 +682,20 @@ function validateEndpoints(mocksDir, options) {
         continue;
       }
 
-      const result = validateResponseFile(responsePath, responseDir, options);
+      const result = responseResults.get(responseFileName)
+        || validateResponseFile(responsePath, responseDir, endpoint.responseFiles, options);
       for (const message of result.errors) {
         emit(responsePath, message);
       }
       if (result.sourcePath != null) {
         collectDataReferences(result.sourcePath, dataReferences);
       }
-      if (sequenceActive && isCritical && (result.type === "middleware" || result.type === "sse" || result.type === "ws")) {
+      if (
+        sequenceStepVariants.has(responseFileName)
+        && result.type != null
+        && result.type !== "mock"
+        && result.type !== "handler"
+      ) {
         error(endpointFilePath, `sequence steps must reference mock or handler variants (${responseFileName} is a ${result.type})`);
       }
       if (!isCritical && result.errors.length > 0) {
@@ -946,6 +966,48 @@ function printHelp() {
   );
 }
 
+function validateWorkspace(targetPath, options = {}) {
+  findings.length = 0;
+  const target = resolveTarget(targetPath || process.cwd());
+  if (target.fatal != null) {
+    return { exitCode: 2, report: { ok: false, fatal: target.fatal } };
+  }
+
+  workspaceRoot = target.root;
+  const validationOptions = { loadScripts: options.loadScripts !== false };
+
+  if (target.checkMarker) {
+    validateMarker(target.root);
+  }
+  if (!isDirectory(target.mocksDir)) {
+    error(target.mocksDir, "mocks folder not found");
+  }
+
+  const { dataReferences, endpointCount, referencedResponseFiles } = validateEndpoints(
+    target.mocksDir,
+    validationOptions
+  );
+  validateOrphanResponseFolders(target.mocksDir, referencedResponseFiles);
+  validateCollections(target.mocksDir);
+  validateDataFiles(target.filesDir, dataReferences);
+
+  const errorCount = findings.filter((finding) => finding.level === "error").length;
+  const warningCount = findings.length - errorCount;
+  return {
+    exitCode: errorCount === 0 ? 0 : 1,
+    report: {
+      ok: errorCount === 0,
+      workspace: target.root,
+      mocksDir: target.mocksDir,
+      endpoints: endpointCount,
+      errors: errorCount,
+      warnings: warningCount,
+      findings: [...findings],
+      scriptsLoaded: validationOptions.loadScripts,
+    },
+  };
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -958,77 +1020,49 @@ function main() {
     return 2;
   }
 
-  const target = resolveTarget(options.target || process.cwd());
-  if (target.fatal != null) {
+  const result = validateWorkspace(options.target || process.cwd(), options);
+  if (result.report.fatal != null) {
     if (options.json) {
-      process.stdout.write(`${JSON.stringify({ ok: false, fatal: target.fatal }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);
     } else {
-      process.stderr.write(`${target.fatal}\n`);
+      process.stderr.write(`${result.report.fatal}\n`);
     }
-    return 2;
+    return result.exitCode;
   }
-
-  workspaceRoot = target.root;
-
-  if (target.checkMarker) {
-    validateMarker(target.root);
-  }
-  if (!isDirectory(target.mocksDir)) {
-    error(target.mocksDir, "mocks folder not found");
-  }
-
-  const { dataReferences, endpointCount, referencedResponseFiles } = validateEndpoints(target.mocksDir, options);
-  validateOrphanResponseFolders(target.mocksDir, referencedResponseFiles);
-  validateCollections(target.mocksDir);
-  validateDataFiles(target.filesDir, dataReferences);
-
-  const errorCount = findings.filter((finding) => finding.level === "error").length;
-  const warningCount = findings.length - errorCount;
 
   if (options.json) {
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          ok: errorCount === 0,
-          workspace: target.root,
-          mocksDir: target.mocksDir,
-          endpoints: endpointCount,
-          errors: errorCount,
-          warnings: warningCount,
-          findings,
-          scriptsLoaded: options.loadScripts,
-        },
-        null,
-        2
-      )}\n`
-    );
-    return errorCount === 0 ? 0 : 1;
+    process.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);
+    return result.exitCode;
   }
 
   const lines = [];
   if (!options.quiet) {
-    lines.push(`Mockxy workspace: ${target.root}`);
-    lines.push(`Endpoint files:   ${endpointCount}`);
+    lines.push(`Mockxy workspace: ${result.report.workspace}`);
+    lines.push(`Endpoint files:   ${result.report.endpoints}`);
     if (!options.loadScripts) {
       lines.push("Scripts:          not loaded (--no-scripts): handler/middleware exports were not checked");
     }
     lines.push("");
   }
-  for (const finding of findings) {
+  for (const finding of result.report.findings) {
     const tag = finding.level === "error" ? "ERROR" : "WARN ";
     lines.push(`${tag} ${finding.file == null ? "" : `${finding.file}: `}${finding.message}`);
   }
-  if (findings.length > 0) {
+  if (result.report.findings.length > 0) {
     lines.push("");
   }
   lines.push(
-    errorCount === 0
-      ? `OK — ${endpointCount} endpoint file(s), 0 errors, ${warningCount} warning(s).`
-      : `FAILED — ${errorCount} error(s), ${warningCount} warning(s).`
+    result.report.ok
+      ? `OK — ${result.report.endpoints} endpoint file(s), 0 errors, ${result.report.warnings} warning(s).`
+      : `FAILED — ${result.report.errors} error(s), ${result.report.warnings} warning(s).`
   );
   process.stdout.write(`${lines.join("\n")}\n`);
 
-  return errorCount === 0 ? 0 : 1;
+  return result.exitCode;
 }
 
-process.exitCode = main();
+module.exports = { validateWorkspace };
+
+if (require.main === module) {
+  process.exitCode = main();
+}

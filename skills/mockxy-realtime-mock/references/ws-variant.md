@@ -87,7 +87,7 @@ and never fire on their own.
 - The **console** in the endpoint's UI tab shows connections and the **bidirectional transcript**
   (outgoing from script, rules or manual direction; incoming from clients), with one-click resend.
   Via API: `POST /_admin/api/mocks/:id/ws/push` and `GET /_admin/api/mocks/:id/ws/connections`.
-- A `ws` variant **cannot be a step of a variant sequence**.
+- A `ws` variant **cannot be a step of a `sequence` response**.
 
 ## Passthrough, for context
 

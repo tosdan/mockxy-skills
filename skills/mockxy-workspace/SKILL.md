@@ -1,6 +1,6 @@
 ---
 name: mockxy-workspace
-description: Create, inspect and validate a Mockxy mock workspace and its endpoint files. Use when the user points at a Mockxy workspace folder and asks to add, change or organize mocked HTTP endpoints; when a workspace must be initialized from scratch; when endpoints must be enabled, disabled, renamed, grouped into collections or given a variant sequence; or when a workspace must be checked for format errors before being handed back or committed.
+description: Create, inspect and validate a Mockxy mock workspace and its endpoint files. Use when the user points at a Mockxy workspace folder and asks to add, change or organize mocked HTTP endpoints; when a workspace must be initialized from scratch; when endpoints must be enabled, disabled, renamed, grouped into collections or configured with a sequence response; or when a workspace must be checked for format errors before being handed back or committed.
 ---
 
 # Mockxy workspace
@@ -14,7 +14,7 @@ belongs to the sibling skills:
 
 | To write | Use |
 |---|---|
-| static responses, templating, variant sequences | `mockxy-static-mock` |
+| static responses, templating, sequence responses | `mockxy-static-mock` |
 | handler and middleware scripts, data files | `mockxy-dynamic-mock` |
 | Server-Sent Events and WebSocket variants | `mockxy-realtime-mock` |
 
@@ -85,6 +85,8 @@ The rules the engine enforces:
 - `responseFiles` — at least one plain filename ending in `.response.json`, no path separators, no
   duplicates.
 - `selectedResponseFile` — required, and must be one of `responseFiles`.
+- `sequence` is **not** an endpoint field. A sequence is a response variant; selecting its filename
+  is the only way to activate it.
 
 The folder tree mirrors the API path by convention only: what is served is the `path` field.
 Use `{id}` in folder names because `:` is not a legal Windows path character.
@@ -94,7 +96,7 @@ ignored with a warning. A broken endpoint file does not take the server down —
 is skipped.
 
 Details: [references/endpoint-file.md](references/endpoint-file.md) for every field including
-variant sequences, [references/path-convention.md](references/path-convention.md) for how Mockxy
+sequence selection, [references/path-convention.md](references/path-convention.md) for how Mockxy
 decides which endpoint answers a request.
 
 ## Adding a variant to an existing endpoint

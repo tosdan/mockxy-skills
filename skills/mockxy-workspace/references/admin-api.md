@@ -39,11 +39,12 @@ their variants for good.
 | `GET /mocks` | the whole catalog: endpoints, collections and orderings. Endpoint files that fail to load are reported in `loadErrors` instead of failing the request |
 | `GET /mocks/resolve?method&path` | which endpoint would cover a concrete request today, disabled ones included; `{ mock: null }` if none |
 | `POST /mocks` | creates an endpoint. If one already exists for method+path it answers `409` with `details.existingMockId`, so you can add a variant to that endpoint instead |
-| `GET /mocks/:id` | endpoint detail with its variants, `sequence` and `sequenceState` |
-| `PUT /mocks/:id` | updates the definition: `enabled`, selected variant, and `{ sequence }` (`null` removes it) |
-| `POST /mocks/:id/sequence/reset` | resets the sequence cursor |
-| `PUT /mocks/:id/endpoint` | updates method, path, description |
-| `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }` |
+| `GET /mocks/:id` | endpoint detail and variants; when the selected response is a sequence it also exposes `sequence` and `sequenceState` |
+| `PUT /mocks/:id` | selects `{ selectedResponseFile }`, or updates the selected ordinary response; legacy `{ sequence }` bodies are rejected |
+| `GET /mocks/:id/sequence/state` | selected sequence filename and live cursor; `400` when another response type is selected |
+| `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory |
+| `PUT /mocks/:id/endpoint` | updates `description` and `enabled`; method and path are immutable |
+| `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure |
 | `PUT /mocks/:id/collection` | assigns the endpoint to a collection |
 | `DELETE /mocks/:id` | deletes endpoint and variants |
 
@@ -51,10 +52,10 @@ their variants for good.
 
 | Method and path | What it does |
 |---|---|
-| `POST /mocks/:id/responses` | adds a `mock`, `handler`, `middleware`, `sse` or `ws` variant |
-| `PUT /mocks/:id/responses/:file` | updates a variant, including `templated` and SSE/WS scripts, rules and presets |
+| `POST /mocks/:id/responses` | adds and selects a `mock`, `handler`, `middleware`, `sse`, `ws` or `sequence` variant |
+| `PUT /mocks/:id/responses/:file` | updates a variant, including sequence fields, `templated`, and SSE/WS scripts, rules and presets |
 | `PUT /mocks/:id/responses/:file/file` | uploads the raw bytes of a file-backed variant — `application/octet-stream` up to 12 MB, with `?contentType=…&filename=…` |
-| `DELETE /mocks/:id/responses/:file` | deletes a variant |
+| `DELETE /mocks/:id/responses/:file` | deletes a variant; a sequence target is protected with `409` and `details.referencedBy` |
 
 ## Streaming consoles
 

@@ -13,7 +13,7 @@ Two response variant types keep a connection open instead of answering once:
   declarative rules, or are pushed from the console.
 
 Both are ordinary variants: same endpoint file, same `<METHOD>.responses/` folder, selected through
-`selectedResponseFile`. Neither may be a step of a variant sequence.
+`selectedResponseFile`. Neither may be a step of a `sequence` response.
 
 ## The endpoint file is unchanged
 
