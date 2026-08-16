@@ -9,7 +9,8 @@ The filter applies **before** the page.
 
 ## When they kick in
 
-Only on **JSON bodies of type `mock`** that are:
+Automatically on **JSON bodies of type `mock`**, and explicitly on a handler result that opts in
+with `applyListQuery: true`, when the body is:
 
 - an **array** (`[ ... ]`), or
 - an **object with exactly one top-level array property** — for example
@@ -17,7 +18,10 @@ Only on **JSON bodies of type `mock`** that are:
   replaces the array, the other properties pass through intact. With two or more array properties
   the automatism does not kick in, since there would be no criterion to choose.
 
-Left out: textual bodies, `file` payloads, handler and middleware responses, proxied responses.
+Left out: textual bodies, `file` payloads, middleware responses, proxied responses and handlers
+without opt-in. Handler opt-in requires `jsonBody`; a non-boolean `applyListQuery` or `true`
+without `jsonBody` makes the handler result invalid. See `mockxy-dynamic-mock` for the handler
+contract.
 
 ## Filters
 

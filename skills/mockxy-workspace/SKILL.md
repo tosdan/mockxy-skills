@@ -121,7 +121,7 @@ hot reload picks it up. Use it unless there is a reason not to.
 
 The **admin API** under `/_admin/api` is the alternative when a Mockxy server is already running
 and the user wants a live change, a runtime action files cannot express (resetting a sequence
-cursor, pushing an SSE/WS message) or an OpenAPI import —
+cursor or handler shared state, pushing an SSE/WS message) or an OpenAPI import —
 [references/admin-api.md](references/admin-api.md). Never start a server, import a spec or mutate
 a running instance without the user asking.
 

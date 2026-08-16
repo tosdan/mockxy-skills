@@ -22,6 +22,9 @@ their variants for good.
 - **No authentication**: it writes files and executes code, so it is meant for loopback use.
 - Mutations accept **explicit JSON only** (`content-type: application/json`); the OpenAPI import
   also accepts YAML but rejects `text/plain` with `415`.
+- Parameterless POST operations still require an actual JSON body exactly equal to `{}`. This
+  applies to sequence reset, monitor dump flush, and both shared-state reset routes. A missing or
+  empty body returns `400` after a valid JSON media type; a missing/wrong media type returns `415`.
 
 ## Conventions
 
@@ -42,9 +45,10 @@ their variants for good.
 | `GET /mocks/:id` | endpoint detail and variants; when the selected response is a sequence it also exposes `sequence` and `sequenceState` |
 | `PUT /mocks/:id` | selects `{ selectedResponseFile }`, or updates the selected ordinary response; legacy `{ sequence }` bodies are rejected |
 | `GET /mocks/:id/sequence/state` | selected sequence filename and live cursor; `400` when another response type is selected |
-| `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory |
+| `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory — body `{}`; shared runtime state is unchanged |
 | `PUT /mocks/:id/endpoint` | updates `description` and `enabled`; method and path are immutable |
 | `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure |
+| `POST /mocks/:id/copy?dryRun=true` | read-only copy plan (`200`) with response files, assets, literal shared-state references and warnings; the real copy recalculates and returns `201` |
 | `PUT /mocks/:id/collection` | assigns the endpoint to a collection |
 | `DELETE /mocks/:id` | deletes endpoint and variants |
 
@@ -80,7 +84,11 @@ their variants for good.
 | `PATCH /files/:name` | renames — `{ name, rewriteReferences }` |
 | `DELETE /files/:name` | deletes a data file |
 | `GET /monitoring/requests` | captured traffic, most recent first |
+| `POST /monitoring/dump/flush` | flushes pending monitor entries — body `{}` |
 | `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic |
+| `GET /runtime/shared-state` | metadata, usage and limits of handler shared state; never values |
+| `POST /runtime/shared-state/:name/reset` | idempotently resets one resource — body `{}`; returns `{ name, reset }` |
+| `POST /runtime/shared-state/reset` | resets all resources — body `{}`; returns `{ resetCount }` |
 | `GET /server`, `PATCH /server` | `{ serverEnabled, proxyAll }` — the three serving modes |
 
 ## OpenAPI import
@@ -98,6 +106,10 @@ the schema. Collections come from the spec tags. Endpoints that already exist fo
 method+path are left untouched.
 
 **Always run the import with `dryRun=true` first** and show the user the plan before writing.
+Likewise, run endpoint copy with `?dryRun=true` first. A copied handler keeps literal
+`sharedState.open("name", ...)` references unchanged, which may intentionally or accidentally
+make the new endpoint share the original's live resource. The preview is best-effort and does
+not execute source code; dynamic/helper-based references can be missed.
 
 ## Examples
 
@@ -109,6 +121,9 @@ curl -s -X PATCH http://localhost:3000/_admin/api/server \
 
 curl -s -X POST "http://localhost:3000/_admin/api/mocks/import/openapi?dryRun=true" \
   -H "content-type: application/yaml" --data-binary @openapi.yaml
+
+curl -s -X POST http://localhost:3000/_admin/api/runtime/shared-state/items/reset \
+  -H "content-type: application/json" -d '{}'
 ```
 
 For the exact structure of create and update bodies, the most reliable source is the running UI

@@ -1,4 +1,4 @@
 interface:
   display_name: "Mockxy Dynamic Mock"
-  short_description: "Handler, middleware e file dati di un workspace Mockxy"
-  default_prompt: "Usa $mockxy-dynamic-mock per scrivere nel workspace Mockxy che ti indico un handler che risponde secondo la logica che ti descrivo."
+  short_description: "Handler, middleware, file dati e stato condiviso Mockxy"
+  default_prompt: "Usa $mockxy-dynamic-mock per scrivere nel workspace Mockxy che ti indico handler e stato runtime condiviso secondo lo scenario che ti descrivo."

@@ -64,3 +64,19 @@ Use a **data file** when the dataset is shared by several endpoints, when it is 
 drown the logic, or when the user will want to edit it without reading code. Keep it **inline**
 when it is a handful of entries used by one handler only: a one-file mock is easier to read than
 two.
+
+## Using a data file as a shared-state seed
+
+`data()` is always a fresh per-call copy. To make a POST affect a later GET, use the file only as
+the initializer for a named [`sharedState`](shared-state.md) resource:
+
+```js
+const items = await sharedState.open("items", {
+  seedKey: "items@v1",
+  initialize: () => data("items"),
+});
+```
+
+The first open after restart/reset reads `files/items.json` and stores a detached runtime copy.
+Editing the file after that does **not** alter the live resource; reset it to use the new seed.
+Runtime mutations likewise never write the file.

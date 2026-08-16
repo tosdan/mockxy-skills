@@ -123,11 +123,17 @@ empty list and a 500 error.
 ### `mockxy-dynamic-mock`
 
 Handlers and middleware: local JavaScript scripts that compute the response or transform the real
-backend's one, plus the JSON data files they read through `data()`.
+backend's one, plus JSON data files read through `data()` and named runtime state shared between
+handlers. It covers scenarios where a POST must change a later GET before the backend exists.
 
 ```text
 Use $mockxy-dynamic-mock to write a handler on GET /api/users/:id that looks the user up in the
 data file and answers 404 when it does not exist.
+```
+
+```text
+Use $mockxy-dynamic-mock to make POST /api/items add arbitrary frontend data to shared runtime
+state and make GET /api/items return the seed plus every added item.
 ```
 
 ### `mockxy-realtime-mock`
