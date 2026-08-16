@@ -48,6 +48,9 @@ their presence in the script is a validation error.
     JSON shape; otherwise `undefined`.
 - **`data(name)`** — the accessor to the workspace data files: `await data("users")` returns the
   content of `files/users.json`. See [data-files.md](data-files.md).
+- **`sharedState`** — request-scoped access to JSON resources shared by different handlers. Use
+  `await sharedState.open(name, { seedKey, initialize })`, then `read()`, `mutate()` or
+  `replace()` on the returned handle. See [shared-state.md](shared-state.md).
 - **`state`** — a mutable object **persistent across calls** of the same endpoint (and shared
   between its variants): the memory for counters, per-resource state machines
   (`state[params.id] = ...`), outcomes depending on history. It is **ephemeral and local to the
@@ -93,6 +96,9 @@ running the script.
   - **`body`** — a **string or `Buffer`**, served as-is: the content-type is whatever `headers`
     declares. The route for text, XML, or generated binary payloads;
   - **neither** — a response with no body (typical for `204`).
+- **`applyListQuery`** — optional boolean, default `false`. With `true`, Mockxy applies its
+  automatic list filters and pagination to `jsonBody`, including `X-Total-Count`. It requires
+  `jsonBody`; a non-boolean value makes the handler result invalid.
 
 Handler responses go out with no-cache headers and `x-mock-source: handler`, and receive **no
 simulated delay**: a script that wants to be slow waits inside itself.

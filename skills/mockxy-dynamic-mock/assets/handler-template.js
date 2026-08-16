@@ -4,14 +4,19 @@
 // Do not declare method, path or disabled here: routing belongs to the endpoint file.
 module.exports = {
   // Context: params, query, requestHeaders, bodyBuffer, bodyText, jsonBody,
-  //          data, state, callCount, firstRequestAt, req.
-  async resolveResponse({ params, query, requestHeaders, jsonBody, data }) {
+  //          data, sharedState, state, callCount, firstRequestAt, req.
+  async resolveResponse({ params, query, requestHeaders, jsonBody, data, sharedState }) {
     // const items = await data("dataset-name"); // reads files/dataset-name.json
+    // const runtimeItems = await sharedState.open("items", {
+    //   seedKey: "items@v1",
+    //   initialize: () => data("items"),
+    // });
 
     return {
       status: 200,
       headers: { "x-source": "handler" },
       jsonBody: { params, query, requestBody: jsonBody ?? null },
+      // applyListQuery: true, // opt in when jsonBody is a list
     };
   },
 };
