@@ -18,7 +18,13 @@ their variants for good.
 ## When it answers
 
 - Enabled by `ADMIN_API_ENABLED` (on in development, off in production by default). When off,
-  every route answers `404`.
+  every route answers `404` with `Admin API disabled`. Up to Mockxy 1.3.2 a missing flag left it
+  off even in development: if that is the answer you get, the server must be restarted with
+  `ADMIN_API_ENABLED=true`.
+- The namespace is **reserved** in newer engines: a method or path that is not listed here
+  answers `404` with `details.code: "ADMIN_ROUTE_NOT_FOUND"`. Older engines forwarded unknown
+  admin paths to mock serving and, with proxy fallback on, to the real backend — so check the
+  method and path before retrying a call that failed.
 - **No authentication**: it writes files and executes code, so it is meant for loopback use.
 - Mutations accept **explicit JSON only** (`content-type: application/json`); the OpenAPI import
   also accepts YAML but rejects `text/plain` with `415`.
@@ -31,7 +37,8 @@ their variants for good.
 - An endpoint's **`:id`** is the endpoint file's path, relative to the mocks folder, encoded
   base64url. Read it from the listing and treat it as **opaque** — do not build it yourself.
 - Errors are JSON `{ error, message, details? }` with the matching status (`400` invalid input,
-  `404` not found, `409` conflict, `415` media type, `500`).
+  `403` unexpected `Host` header, `404` not found, `409` conflict, `415` media type, `500`).
+  Newer errors carry a stable `details.code`: branch on it rather than on the message text.
 - Catalog mutations **reload the runtime immediately**: the change is served from the next request
   on, with no restart.
 
@@ -47,6 +54,7 @@ their variants for good.
 | `GET /mocks/:id/sequence/state` | selected sequence filename and live cursor; `400` when another response type is selected |
 | `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory — body `{}`; shared runtime state is unchanged |
 | `PUT /mocks/:id/endpoint` | updates `description` and `enabled`; method and path are immutable |
+| `PATCH /mocks/enabled` | enables or disables a list of endpoints — `{ ids, enabled }` with a non-empty `ids`; an unknown id fails the request before anything is written; answers with the refreshed catalog |
 | `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure |
 | `POST /mocks/:id/copy?dryRun=true` | read-only copy plan (`200`) with response files, assets, literal shared-state references and warnings; the real copy recalculates and returns `201` |
 | `PUT /mocks/:id/collection` | assigns the endpoint to a collection |
@@ -75,6 +83,9 @@ their variants for good.
 | Method and path | What it does |
 |---|---|
 | `POST /mocks/collections` | creates a collection, nested too |
+| `PATCH /mocks/collections/order` | reorders sibling collections — `{ collectionIds, parentId? }`, each sibling exactly once |
+| `PATCH /mocks/collections/:id/items/order` | reorders the endpoints of a collection — `{ itemIds }`, each endpoint exactly once |
+| `PATCH /mocks/collections/:parentKey/children/order` | reorders everything directly under a parent (`root`, `unsorted` or a collection id), endpoints and sub-collections interleaved — `{ childRefs }`, each child exactly once |
 | `PATCH /mocks/collections/:id/parent` | moves a collection in the tree |
 | `PATCH /mocks/collections/:id/enabled` | enables/disables a whole subtree **in bulk** |
 | `DELETE /mocks/collections/:id` | dissolves the subtree; its endpoints go back to Unsorted |
@@ -83,9 +94,16 @@ their variants for good.
 | `PUT /files/:name` | creates (`201`) or replaces (`200`) — raw bytes up to 25 MB, JSON-validated |
 | `PATCH /files/:name` | renames — `{ name, rewriteReferences }` |
 | `DELETE /files/:name` | deletes a data file |
-| `GET /monitoring/requests` | captured traffic, most recent first |
+| `GET /monitoring/requests` | captured traffic kept in memory (up to 250 entries), most recent first |
+| `DELETE /monitoring/requests` | clears the in-memory traffic; dump files on disk are untouched |
+| `GET /monitoring/requests/stream` | Server-Sent Events: a `snapshot` of the current entries, then one event per new request and a `clear` event |
+| `GET /monitoring/dump` | state of the on-disk dump of captured traffic |
+| `PATCH /monitoring/dump` | turns the dump on or off and tunes it at runtime — `{ enabled?, intervalMs?, threshold? }`; only traffic captured after it is enabled is written |
 | `POST /monitoring/dump/flush` | flushes pending monitor entries — body `{}` |
-| `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic |
+| `GET /monitoring/dumps` | lists the dump files |
+| `GET /monitoring/dumps/read?fileIndex&lineIndex&limit` | reads the dumps page by page, oldest first; every item carries a `dumpKey`; keep passing `nextCursor` until `done` |
+| `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic — `{ file }` for a whole dump file or `{ keys }` with `dumpKey` values; existing endpoints are skipped |
+| `DELETE /monitoring/dumps/:file` | deletes one dump file |
 | `GET /runtime/shared-state` | metadata, usage and limits of handler shared state; never values |
 | `POST /runtime/shared-state/:name/reset` | idempotently resets one resource — body `{}`; returns `{ name, reset }` |
 | `POST /runtime/shared-state/reset` | resets all resources — body `{}`; returns `{ resetCount }` |
@@ -126,5 +144,7 @@ curl -s -X POST http://localhost:3000/_admin/api/runtime/shared-state/items/rese
   -H "content-type: application/json" -d '{}'
 ```
 
-For the exact structure of create and update bodies, the most reliable source is the running UI
-itself: every action is a call to these routes, observable in the browser's developer tools.
+For the exact structure of every request and response body, read the machine-readable OpenAPI
+3.1 description of this API that ships in the Mockxy repository, `docs/admin-api.openapi.yaml`.
+It documents each route's schemas, status codes and payload variants. Prefer it to guessing from
+this summary, and match it to the Mockxy version the user is running.
