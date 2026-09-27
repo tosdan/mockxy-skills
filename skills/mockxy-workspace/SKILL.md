@@ -123,7 +123,9 @@ The **admin API** under `/_admin/api` is the alternative when a Mockxy server is
 and the user wants a live change, a runtime action files cannot express (resetting a sequence
 cursor or handler shared state, pushing an SSE/WS message) or an OpenAPI import —
 [references/admin-api.md](references/admin-api.md). Never start a server, import a spec or mutate
-a running instance without the user asking.
+a running instance without the user asking. In newer engines a `2xx` confirms the change is
+served; on a failure branch on `details.code`, and after a batch read the per-item outcomes even
+with `201` — [Outcome of a mutation](references/admin-api.md#outcome-of-a-mutation).
 
 ## Before reporting the work done
 
