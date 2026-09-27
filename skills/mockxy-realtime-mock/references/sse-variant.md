@@ -66,7 +66,9 @@ They are the console's macros; they never fire on their own.
   the script starts over.
 - The **console** in the endpoint's UI tab shows open connections and history, and allows manual
   direction (broadcast to every connection). Via API: `POST /_admin/api/mocks/:id/sse/push` and
-  `GET /_admin/api/mocks/:id/sse/connections`.
+  `GET /_admin/api/mocks/:id/sse/connections`. Newer engines target the definition the runtime
+  serves, not the selection on disk: `404` if the endpoint is not served, `400` if it is served
+  with another type.
 - The monitor entry is created when the connection closes.
 - An `sse` variant **cannot be a step of a `sequence` response**.
 - A proxy middleware never transforms a declared `text/event-stream`: buffering a stream that

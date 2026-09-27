@@ -42,6 +42,35 @@ their variants for good.
 - Catalog mutations **reload the runtime immediately**: the change is served from the next request
   on, with no restart.
 
+## Outcome of a mutation
+
+Newer engines (after Mockxy 1.3.2) verify every mutation against the runtime they have just
+reloaded, and run the mutations of one workspace **one at a time**; reads, traffic and console
+pushes do not wait for them.
+
+- A `2xx` means the files are written **and** the runtime serves the requested effect on the
+  endpoints involved. Load errors on unrelated endpoints do not fail a valid mutation.
+- A failure carries `details.code` and `details.rollback` (`not_needed`, `restored` or `failed`):
+
+  | Status and code | Meaning | What to do |
+  |---|---|---|
+  | `400 MUTATION_REJECTED` | invalid input (`not_needed`), or a change the runtime cannot load (`restored`: files put back) | fix the input or the file content and try again |
+  | `500 RUNTIME_APPLY_FAILED` | the runtime reload failed as a whole; files restored | report it; retry only once the cause is fixed |
+  | `500 MUTATION_FAILED` | unexpected write error; files restored | report it |
+  | `500 ROLLBACK_FAILED` | the restore failed too, or an endpoint involved is not served as it was before; `details.cause` and `details.recoveryError` explain | **stop**: the workspace state is not consistent. Report both errors and read the catalog back before any further change |
+
+- **A lost response does not authorize a blind retry.** If a create timed out or the connection
+  dropped, read the catalog (or `GET /mocks/resolve`) first: repeating it may answer `409` with
+  `details.existingMockId` because the first attempt succeeded.
+- **Batches** (`POST /mocks/import/openapi`, `POST /monitoring/dumps/create-mocks`) keep the items
+  that succeeded. Read the per-item outcome even with `201`: `items[].writeOutcome`
+  (`created`, `skipped`, `failed`), `items[].runtimeOutcome` (`applied`, `not_applied`,
+  `not_applicable`) with the reason in `items[].error`, and `runtime.status` (`applied`, or
+  `degraded` when some endpoint files fail to load). The counts only describe what was written.
+  **Stop the setup if one of your own resources is `not_applied`** and report it. A failed final
+  reload answers `500 BATCH_RUNTIME_FAILED`; an item whose restore failed stops the batch with
+  `500 ROLLBACK_FAILED`. Both carry the partial result in `details.result`.
+
 ## Catalog and endpoints
 
 | Method and path | What it does |
@@ -49,11 +78,11 @@ their variants for good.
 | `GET /mocks` | the whole catalog: endpoints, collections and orderings. Endpoint files that fail to load are reported in `loadErrors` instead of failing the request |
 | `GET /mocks/resolve?method&path` | which endpoint would cover a concrete request today, disabled ones included; `{ mock: null }` if none |
 | `POST /mocks` | creates an endpoint. If one already exists for method+path it answers `409` with `details.existingMockId`, so you can add a variant to that endpoint instead |
-| `GET /mocks/:id` | endpoint detail and variants; when the selected response is a sequence it also exposes `sequence` and `sequenceState` |
+| `GET /mocks/:id` | endpoint detail and variants; when the selected response is a sequence it also exposes `sequence` and `sequenceState`. `409` with `details: { code: "READ_INCONSISTENT", retryable: true }` means a file was missing while the endpoint was read: repeat the read **once**; if it fails again, report the detail as unreadable and write nothing based on it |
 | `PUT /mocks/:id` | selects `{ selectedResponseFile }`, or updates the selected ordinary response; legacy `{ sequence }` bodies are rejected |
 | `GET /mocks/:id/sequence/state` | selected sequence filename and live cursor; `400` when another response type is selected |
 | `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory — body `{}`; shared runtime state is unchanged |
-| `PUT /mocks/:id/endpoint` | updates `description` and `enabled`; method and path are immutable |
+| `PUT /mocks/:id/endpoint` | updates `description` and/or `enabled`; method and path are immutable. Send **only the field you change**: resending a value read earlier overwrites a change made meanwhile |
 | `PATCH /mocks/enabled` | enables or disables a list of endpoints — `{ ids, enabled }` with a non-empty `ids`; an unknown id fails the request before anything is written; answers with the refreshed catalog |
 | `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure |
 | `POST /mocks/:id/copy?dryRun=true` | read-only copy plan (`200`) with response files, assets, literal shared-state references and warnings; the real copy recalculates and returns `201` |
@@ -77,6 +106,11 @@ their variants for good.
 | `GET /mocks/:id/sse/connections` | open SSE connections and history |
 | `POST /mocks/:id/ws/push` | broadcasts `{ data }` to every open WebSocket connection |
 | `GET /mocks/:id/ws/connections` | open WebSocket connections and the bidirectional transcript |
+
+The consoles act on the definition the **running** engine serves, not on the selection on disk:
+after a new selection that fails to load, they keep working on the previous route. They answer
+`404` when the runtime does not serve the endpoint (disabled, or never loaded) and `400` when it
+serves it with another type, middleware included. They do not wait for queued mutations.
 
 ## Collections, data files, monitor, server state
 
@@ -102,7 +136,7 @@ their variants for good.
 | `POST /monitoring/dump/flush` | flushes pending monitor entries — body `{}` |
 | `GET /monitoring/dumps` | lists the dump files |
 | `GET /monitoring/dumps/read?fileIndex&lineIndex&limit` | reads the dumps page by page, oldest first; every item carries a `dumpKey`; keep passing `nextCursor` until `done` |
-| `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic — `{ file }` for a whole dump file or `{ keys }` with `dumpKey` values; existing endpoints are skipped |
+| `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic — `{ file }` for a whole dump file or `{ keys }` with `dumpKey` values; existing endpoints are skipped. Read `items` and `runtime` as described in [Outcome of a mutation](#outcome-of-a-mutation) |
 | `DELETE /monitoring/dumps/:file` | deletes one dump file |
 | `GET /runtime/shared-state` | metadata, usage and limits of handler shared state; never values |
 | `POST /runtime/shared-state/:name/reset` | idempotently resets one resource — body `{}`; returns `{ name, reset }` |
@@ -113,7 +147,7 @@ their variants for good.
 
 | Method and path | What it does |
 |---|---|
-| `POST /mocks/import/openapi` | imports the spec (raw JSON/YAML body, up to 12 MB) |
+| `POST /mocks/import/openapi` | imports the spec (raw JSON/YAML body, up to 12 MB); read `items` and `runtime` as described in [Outcome of a mutation](#outcome-of-a-mutation) |
 | `POST /mocks/import/openapi?dryRun=true` | the plan and its counts, writing nothing |
 | `POST /mocks/import/openapi?prefix=/be` | prepends `/be` to every imported path |
 
@@ -121,7 +155,8 @@ OpenAPI 3.0/3.1 and Swagger 2.0 are accepted, JSON or YAML. For each path+method
 generates the path converted to Mockxy's convention (`/users/{id}` → `/users/:id`), the first
 declared `2xx` status, and a body taken from the spec's example or sampled deterministically from
 the schema. Collections come from the spec tags. Endpoints that already exist for the same
-method+path are left untouched.
+method+path are left untouched. A collection that cannot be assigned does not undo the endpoint:
+it shows up in that item's `error`.
 
 **Always run the import with `dryRun=true` first** and show the user the plan before writing.
 Likewise, run endpoint copy with `?dryRun=true` first. A copied handler keeps literal
