@@ -62,8 +62,11 @@ They are the console's macros; they never fire on their own.
 ## Runtime behavior
 
 - In the silences the engine sends a **heartbeat** comment every 15 seconds, invisible to clients.
-- Connections are closed on hot reload and on shutdown: the SSE client reconnects on its own and
-  the script starts over.
+- A hot reload closes the connections only when the endpoint's stream changes (script, `retryMs`,
+  `onEnd`, type) or the endpoint is disabled or deleted: the SSE client reconnects on its own and
+  the script starts over. Title, description, presets, inactive variants and other endpoints
+  leave them open; shutdown closes them all. Engines up to Mockxy 1.3.2 close every connection on
+  every reload.
 - The **console** in the endpoint's UI tab shows open connections and history, and allows manual
   direction (broadcast to every connection). Via API: `POST /_admin/api/mocks/:id/sse/push` and
   `GET /_admin/api/mocks/:id/sse/connections`. Newer engines target the definition the runtime
