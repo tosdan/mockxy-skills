@@ -57,7 +57,7 @@ pushes do not wait for them.
   | `400 MUTATION_REJECTED` | invalid input (`not_needed`), or a change the runtime cannot load (`restored`: files put back) | fix the input or the file content and try again |
   | `500 RUNTIME_APPLY_FAILED` | the runtime reload failed as a whole; files restored | report it; retry only once the cause is fixed |
   | `500 MUTATION_FAILED` | unexpected write error; files restored | report it |
-  | `500 ROLLBACK_FAILED` | the restore failed too, or an endpoint involved is not served as it was before; `details.cause` and `details.recoveryError` explain | **stop**: the workspace state is not consistent. Report both errors and read the catalog back before any further change |
+  | `500 ROLLBACK_FAILED` | the restore failed too, or an endpoint involved is not served as it was before; `details.cause` and `details.recoveryError` explain | **stop**: the workspace state is not consistent. Report both errors, then read `GET /runtime/status` and the catalog back before any further change |
 
 - **A lost response does not authorize a blind retry.** If a create timed out or the connection
   dropped, read the catalog (or `GET /mocks/resolve`) first: repeating it may answer `409` with
@@ -143,6 +143,7 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `POST /runtime/shared-state/reset` | resets all resources — body `{}`; returns `{ resetCount }` |
 | `GET /server`, `PATCH /server` | `{ serverEnabled, proxyAll }` — the three serving modes |
 | `GET /config` | effective configuration, read-only — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
+| `GET /runtime/status` | outcome of the last load of the workspace, `200` even when degraded or failed — `lastAttempt` (`reasons` among `startup`, `admin`, `watcher`; `status` `applied`, `degraded` or `failed`), per-file `errors` with `serving: retained` (previous version still served) or `missing`, and `fatalError`; only the last attempt |
 | `GET /openapi.yaml` | the OpenAPI contract of the running version, as `application/yaml` |
 
 ## OpenAPI import
