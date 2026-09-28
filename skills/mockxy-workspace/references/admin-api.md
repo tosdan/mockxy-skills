@@ -101,6 +101,8 @@ pushes do not wait for them.
 | `GET /mocks/:id/responses/:file` | one variant by filename, selected or not — definition, direct `source`, asset `fileInfo`, `selected` and `active` (the selected variant or a step of the selected sequence); reading it changes nothing |
 | `POST /mocks/:id/responses` | adds and selects a `mock`, `handler`, `middleware`, `sse`, `ws` or `sequence` variant; with `select: false` it is prepared without being activated. The response reports `createdResponseFile` |
 | `PUT /mocks/:id/responses/:file` | updates a variant, including sequence fields, `templated`, and SSE/WS scripts, rules and presets; the response reports `updatedResponseFile` |
+| `PUT /mocks/:id/responses/:file/file` | uploads the raw bytes of a file-backed variant — `application/octet-stream` up to 12 MB, with `?contentType=…&filename=…` |
+| `DELETE /mocks/:id/responses/:file` | deletes a variant; a sequence target is protected with `409` and `details.referencedBy` |
 
 **Prepare, then activate.** When the user wants a variant ready but not yet serving (an error case
 to switch on later, a revised step), create it with `select: false`: the current response, the
@@ -110,8 +112,6 @@ variant or a step of the selected sequence changes what is being served. To revi
 without touching the running scenario, prepare a separate variant (and a separate sequence if
 needed) instead of rewriting it. Engines up to Mockxy 1.3.2 ignore `select` and always select the
 new variant.
-| `PUT /mocks/:id/responses/:file/file` | uploads the raw bytes of a file-backed variant — `application/octet-stream` up to 12 MB, with `?contentType=…&filename=…` |
-| `DELETE /mocks/:id/responses/:file` | deletes a variant; a sequence target is protected with `409` and `details.referencedBy` |
 
 ## Streaming consoles
 
