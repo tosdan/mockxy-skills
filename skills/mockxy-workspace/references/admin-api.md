@@ -17,6 +17,11 @@ their variants for good.
 
 ## When it answers
 
+- **Check which instance answers** before changing anything: `GET /info` reports the
+  `workspace` it serves (canonical folders and a stable `id`) and a `runtimeId` that changes at
+  every start. Make sure the folders are the user's workspace; a different `runtimeId` from the
+  one you saw means the engine restarted. Engines up to Mockxy 1.3.2 lack this route.
+
 - Enabled by `ADMIN_API_ENABLED` (on in development, off in production by default). When off,
   every route answers `404` with `Admin API disabled`. Up to Mockxy 1.3.2 a missing flag left it
   off even in development: if that is the answer you get, the server must be restarted with
@@ -142,6 +147,7 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `POST /runtime/shared-state/:name/reset` | idempotently resets one resource — body `{}`; returns `{ name, reset }` |
 | `POST /runtime/shared-state/reset` | resets all resources — body `{}`; returns `{ resetCount }` |
 | `GET /server`, `PATCH /server` | `{ serverEnabled, proxyAll }` — the three serving modes |
+| `GET /info` | who answers and on what — `version`, `runtimeId` (new at every start), `workspace` (`id` and canonical `mocksDir`, `filesDir`, `root`), `listener`, `watcher` and `revisions` (`catalog`, `server`, `dump`, `diagnostics`, `config`) that grow when the resource changes; cheap to poll |
 | `GET /config` | effective configuration, read-only — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
 | `GET /runtime/status` | outcome of the last load of the workspace, `200` even when degraded or failed — `lastAttempt` (`reasons` among `startup`, `admin`, `watcher`; `status` `applied`, `degraded` or `failed`), per-file `errors` with `serving: retained` (previous version still served) or `missing`, and `fatalError`; only the last attempt |
 | `GET /openapi.yaml` | the OpenAPI contract of the running version, as `application/yaml` |
