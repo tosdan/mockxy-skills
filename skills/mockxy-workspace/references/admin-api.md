@@ -98,7 +98,7 @@ pushes do not wait for them.
 
 | Method and path | What it does |
 |---|---|
-| `GET /mocks/:id/responses/:file` | one variant by filename, selected or not — definition, direct `source`, asset `fileInfo`, `selected` and `active` (the selected variant or a step of the selected sequence); reading it changes nothing |
+| `GET /mocks/:id/responses/:file` | one variant by filename, selected or not — definition, direct `source`, asset `fileInfo`, `selected` and `active` (the selected variant or a step of the selected sequence); reading it changes nothing. If the selected variant cannot be read, it answers `400` rather than guess `active` |
 | `POST /mocks/:id/responses` | adds and selects a `mock`, `handler`, `middleware`, `sse`, `ws` or `sequence` variant; with `select: false` it is prepared without being activated. The response reports `createdResponseFile` |
 | `PUT /mocks/:id/responses/:file` | updates a variant, including sequence fields, `templated`, and SSE/WS scripts, rules and presets; the response reports `updatedResponseFile` |
 | `PUT /mocks/:id/responses/:file/file` | uploads the raw bytes of a file-backed variant — `application/octet-stream` up to 12 MB, with `?contentType=…&filename=…` |
