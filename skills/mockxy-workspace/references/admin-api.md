@@ -76,6 +76,30 @@ pushes do not wait for them.
   reload answers `500 BATCH_RUNTIME_FAILED`; an item whose restore failed stops the batch with
   `500 ROLLBACK_FAILED`. Both carry the partial result in `details.result`.
 
+## Editing with a precondition
+
+Other clients (the UI, another agent, the user in an editor) may change the same endpoint while
+you work. Newer engines let a save fail instead of silently overwriting their change:
+
+1. Read what you are about to change and keep its revision: `descriptionRevision` of
+   `GET /mocks/:id` for the description, `revision` of `GET /mocks/:id/responses/:file` for a
+   variant (or `responseRevision` of the detail for the selected one).
+2. Save with that revision as `expectedRevision`: `PUT /mocks/:id/endpoint` with `description`
+   only (no `enabled` in the same call), `PUT /mocks/:id/responses/:file`, or the legacy
+   `PUT /mocks/:id` for the selected variant. A raw upload takes it in the
+   `X-Mockxy-Expected-Revision` header.
+3. On `409` with `details.code: "REVISION_CONFLICT"` nothing was written. **Do not retry
+   blindly**: read the resource again, compare the current content with your intended change,
+   and either tell the user or save deliberately with the new revision. This is not
+   `READ_INCONSISTENT`, which concerns a read and allows one automatic retry.
+
+Revisions describe content, not history: the same content gives the same token, also after a
+restart. They differ from the informative `revisions` of `GET /info`. Send `expectedRevision`
+whenever you save a description, a variant or an upload on an engine that reports revisions;
+engines up to Mockxy 1.3.2 have none. Selecting a variant, toggling `enabled` and resetting a
+sequence are immediate actions without a precondition. A present but invalid `expectedRevision`
+(`null` or empty included) is a `400`, never a silently disabled check.
+
 ## Catalog and endpoints
 
 | Method and path | What it does |
@@ -87,7 +111,7 @@ pushes do not wait for them.
 | `PUT /mocks/:id` | selects `{ selectedResponseFile }`, or updates the selected ordinary response; legacy `{ sequence }` bodies are rejected |
 | `GET /mocks/:id/sequence/state` | selected sequence filename and live cursor; `400` when another response type is selected |
 | `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory — body `{}`; shared runtime state is unchanged |
-| `PUT /mocks/:id/endpoint` | updates `description` and/or `enabled`; method and path are immutable. Send **only the field you change**: resending a value read earlier overwrites a change made meanwhile |
+| `PUT /mocks/:id/endpoint` | updates `description` and/or `enabled`; method and path are immutable. Send **only the field you change**: resending a value read earlier overwrites a change made meanwhile. Protect a description edit with `expectedRevision` ([Editing with a precondition](#editing-with-a-precondition)) |
 | `PATCH /mocks/enabled` | enables or disables a list of endpoints — `{ ids, enabled }` with a non-empty `ids`; an unknown id fails the request before anything is written; answers with the refreshed catalog |
 | `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure |
 | `POST /mocks/:id/copy?dryRun=true` | read-only copy plan (`200`) with response files, assets, literal shared-state references and warnings; the real copy recalculates and returns `201` |

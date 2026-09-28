@@ -126,6 +126,9 @@ cursor or handler shared state, pushing an SSE/WS message) or an OpenAPI import 
 a running instance without the user asking. In newer engines a `2xx` confirms the change is
 served; on a failure branch on `details.code`, and after a batch read the per-item outcomes even
 with `201` — [Outcome of a mutation](references/admin-api.md#outcome-of-a-mutation).
+When editing through the API, send the revision you read as `expectedRevision` and handle a
+`409 REVISION_CONFLICT` by reading again, never by retrying blindly —
+[Editing with a precondition](references/admin-api.md#editing-with-a-precondition).
 
 ## Before reporting the work done
 
