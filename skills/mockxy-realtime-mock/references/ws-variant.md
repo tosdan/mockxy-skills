@@ -82,8 +82,10 @@ and never fire on their own.
 
 - In the silences the engine sends a protocol **ping** every 30 seconds, permissively: a missed
   pong does not close the connection.
-- Connections are closed on hot reload and on shutdown: the client reconnects and the script
-  starts over.
+- A hot reload closes the connections only when the endpoint's stream changes (script, rules,
+  `onEnd`, `closeCode`, `closeReason`, type) or the endpoint is disabled or deleted: the client
+  reconnects and the script starts over. Anything else leaves them open; shutdown closes them all.
+  Engines up to Mockxy 1.3.2 close every connection on every reload.
 - The **console** in the endpoint's UI tab shows connections and the **bidirectional transcript**
   (outgoing from script, rules or manual direction; incoming from clients), with one-click resend.
   Via API: `POST /_admin/api/mocks/:id/ws/push` and `GET /_admin/api/mocks/:id/ws/connections`.
