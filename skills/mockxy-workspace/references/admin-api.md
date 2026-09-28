@@ -142,6 +142,8 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `POST /runtime/shared-state/:name/reset` | idempotently resets one resource — body `{}`; returns `{ name, reset }` |
 | `POST /runtime/shared-state/reset` | resets all resources — body `{}`; returns `{ resetCount }` |
 | `GET /server`, `PATCH /server` | `{ serverEnabled, proxyAll }` — the three serving modes |
+| `GET /config` | effective configuration, read-only — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
+| `GET /openapi.yaml` | the OpenAPI contract of the running version, as `application/yaml` |
 
 ## OpenAPI import
 
@@ -180,6 +182,9 @@ curl -s -X POST http://localhost:3000/_admin/api/runtime/shared-state/items/rese
 ```
 
 For the exact structure of every request and response body, read the machine-readable OpenAPI
-3.1 description of this API that ships in the Mockxy repository, `docs/admin-api.openapi.yaml`.
-It documents each route's schemas, status codes and payload variants. Prefer it to guessing from
-this summary, and match it to the Mockxy version the user is running.
+3.1 description of this API. Newer engines serve the contract of the running version from
+`GET /_admin/api/openapi.yaml`, the desktop app included: prefer it, because it always matches
+the engine that answers. In the Mockxy repository the source is
+`src/admin/admin-api.openapi.yaml` (`docs/admin-api.openapi.yaml` up to Mockxy 1.3.2). It
+documents each route's schemas, status codes and payload variants. Prefer it to guessing from
+this summary.
