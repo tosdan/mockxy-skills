@@ -94,8 +94,11 @@ you work. Newer engines let a save fail instead of silently overwriting their ch
    `READ_INCONSISTENT`, which concerns a read and allows one automatic retry.
 
 Revisions describe content, not history: the same content gives the same token, also after a
-restart. They differ from the informative `revisions` of `GET /info`. Always send
-`expectedRevision` when editing through the API; engines up to Mockxy 1.3.2 have no revisions.
+restart. They differ from the informative `revisions` of `GET /info`. Send `expectedRevision`
+whenever you save a description, a variant or an upload on an engine that reports revisions;
+engines up to Mockxy 1.3.2 have none. Selecting a variant, toggling `enabled` and resetting a
+sequence are immediate actions without a precondition. A present but invalid `expectedRevision`
+(`null` or empty included) is a `400`, never a silently disabled check.
 
 ## Catalog and endpoints
 
