@@ -8,7 +8,8 @@ running and one of these applies:
 
 - the user explicitly wants a live change against the running instance;
 - the action has no on-disk representation: resetting a sequence cursor, pushing a message into an
-  SSE or WebSocket console, reading the monitor or turning captured traffic into mocks;
+  SSE or WebSocket console, reading the monitor, turning captured traffic into mocks, or changing
+  the backend, delays or timeouts for the current run only;
 - you are importing an OpenAPI specification, which the engine turns into many endpoints at once.
 
 **Never start a server, import a specification or mutate a running instance unless the user asked
@@ -17,11 +18,11 @@ their variants for good.
 
 **The contract evolves with the app.** A minor Mockxy release may change the admin API. Before
 relying on a newer capability (revisions, inactive variants, the paged monitor, mocks from the
-monitor), read the running version from `GET /info` and its contract from `GET /openapi.yaml`, and
-check that the routes you need are declared. Updating these skills does not update the user's
-installation: if the running engine lacks `/info` or the spec, say you cannot verify the contract
-and stop before any change that depends on the newer behavior, naming the update needed. To prepare
-a whole scenario for a test, see [scenario-setup.md](scenario-setup.md).
+monitor, runtime overrides), read the running version from `GET /info` and its contract from
+`GET /openapi.yaml`, and check that the routes you need are declared. Updating these skills does
+not update the user's installation: if the running engine lacks `/info` or the spec, say you
+cannot verify the contract and stop before any change that depends on the newer behavior, naming
+the update needed. To prepare a whole scenario for a test, see [scenario-setup.md](scenario-setup.md).
 
 ## When it answers
 
@@ -181,8 +182,8 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `POST /monitoring/requests/create-mocks` | creates mocks from monitor entries, in the order given — `{ runtimeId, ids, onConflict, selectAddedVariants?, newEndpointEnabled }` ([Creating mocks from traffic](#creating-mocks-from-traffic)) |
 | `DELETE /monitoring/requests` | clears the in-memory traffic; dump files on disk are untouched |
 | `GET /monitoring/requests/stream` | Server-Sent Events: a `snapshot` of the current entries (in newer engines with the `runtimeId` their ids belong to), then one event per new request and a `clear` event |
-| `GET /monitoring/dump` | state of the on-disk dump of captured traffic |
-| `PATCH /monitoring/dump` | turns the dump on or off and tunes it at runtime — `{ enabled?, intervalMs?, threshold? }`; only traffic captured after it is enabled is written |
+| `GET /monitoring/dump` | state of the on-disk dump of captured traffic, with the `maxFileBytes` and `maxTotalBytes` limits in newer engines |
+| `PATCH /monitoring/dump` | turns the dump on or off and tunes it at runtime — `{ enabled?, intervalMs?, threshold?, maxFileBytes?, maxTotalBytes? }`, validated as a whole before any field applies; only traffic captured after it is enabled is written. The limits (newer engines; older ones ignore them) apply from the next write, rotation or pruning and last until the engine restarts; `maxTotalBytes: 0` disables pruning |
 | `POST /monitoring/dump/flush` | flushes pending monitor entries — body `{}` |
 | `GET /monitoring/dumps` | lists the dump files |
 | `GET /monitoring/dumps/read?fileIndex&lineIndex&limit` | reads the dumps page by page, oldest first; every item carries a `dumpKey`; keep passing `nextCursor` until `done` |
@@ -193,7 +194,8 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `POST /runtime/shared-state/reset` | resets all resources — body `{}`; returns `{ resetCount }` |
 | `GET /server`, `PATCH /server` | `{ serverEnabled, proxyAll }` — the three serving modes |
 | `GET /info` | who answers and on what — `version`, `runtimeId` (new at every start), `workspace` (`id` and canonical `mocksDir`, `filesDir`, `root`), `listener`, `watcher` and `revisions` (`catalog`, `server`, `dump`, `diagnostics`, `config`) that grow when the resource changes; cheap to poll |
-| `GET /config` | effective configuration, read-only — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
+| `GET /config` | startup, effective and overridden configuration — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
+| `PATCH /config` | overrides the nine settings until the engine restarts — `{ set?, unset? }` ([Runtime configuration](#runtime-configuration)) |
 | `GET /runtime/status` | outcome of the last load of the workspace, `200` even when degraded or failed — `lastAttempt` (`reasons` among `startup`, `admin`, `watcher`; `status` `applied`, `degraded` or `failed`), per-file `errors` with `serving: retained` (previous version still served) or `missing`, and `fatalError`; only the last attempt |
 | `GET /openapi.yaml` | the OpenAPI contract of the running version, as `application/yaml` |
 
@@ -220,6 +222,36 @@ assigned is `400 CURSOR_AHEAD`; any query parameter without `view=page`, or an u
 `400 INVALID_QUERY` with `details.parameter`. Read one entry in full with
 `GET /monitoring/requests/:id?runtimeId=…`. The monitor is a memory buffer, not an archive: use
 the dump for durable capture.
+
+## Runtime configuration
+
+Newer engines let you change nine settings for the **current run** with `PATCH /config`; check
+that `GET /openapi.yaml` declares `patchRuntimeConfig` first. Nothing is written to disk, and a
+restart brings back the startup values: this is how to point Mockxy at another backend or slow it
+down for a test, not how to change the user's setup. For a permanent change, edit `.env` or ask
+the user to change the desktop workspace settings.
+
+- **`set`** overrides: `backendUrl` (absolute http/https URL, or `null` to disable the backend),
+  the booleans `proxyFallbackEnabled`, `corsEnabled`, `delayAllRequests`,
+  `caseInsensitiveFilters`, `adaptProxyCookies`, `rewriteProxyRedirects` (real booleans, never
+  strings), `globalDelayMs` (integer 0–2147483647) and `requestTimeoutMs` (integer
+  1–2147483647).
+- **`unset`** removes overrides: the setting goes back to its startup value.
+  `unset: ["backendUrl"]` restores the startup backend; `set: { backendUrl: null }` disables it.
+  Unsetting a setting with no override succeeds and changes nothing.
+- Name at least one setting, none twice. Host, port, folders, the admin API and the watcher are
+  fixed at startup: any other name is a `400 MUTATION_REJECTED` with `details.key`.
+
+The whole body is validated before anything applies: a `400` changes nothing. The `200` answer is
+the new `GET /config`: `effective` is what serves now, `overrides` only what was patched (an
+override equal to its startup value stays listed until unset). Each request keeps the
+configuration it had when it entered: a request already waiting on a delay finishes with the old
+backend, the next one uses the new; open WebSocket tunnels and streams are not moved.
+
+Overrides left by an earlier session last until a restart, so **read `effective`, never assume
+the startup values**, and set explicitly what a test depends on. The user sees overrides under
+«Configuration» in the Mockxy status bar and can revert them there; tell them which ones you left.
+In the desktop app, saving workspace settings that restart the engine drops every override.
 
 ## Creating mocks from traffic
 

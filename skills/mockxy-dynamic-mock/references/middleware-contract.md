@@ -11,8 +11,9 @@ a `*.middleware.js` script. Everything that holds for handler scripts holds here
 module, relative `require` with recompilation on change, no `method` / `path` / `disabled` in the
 script.
 
-**It only works with a backend configured** (`BACKEND_URL`, or the workspace's backend setting):
-with no backend there is nothing to transform.
+**It only works with a backend configured** (`BACKEND_URL`, the workspace's backend setting, or
+a runtime override of `backendUrl` in newer engines — see the `mockxy-workspace` skill): with no
+backend there is nothing to transform.
 
 ## The shape of the script
 
