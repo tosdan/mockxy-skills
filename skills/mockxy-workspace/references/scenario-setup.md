@@ -16,9 +16,10 @@ workspace unless they asked for it.
      canonical `mocksDir`). Keep `runtimeId`: if it changes later, the engine restarted.
    - `GET /_admin/api/openapi.yaml`: the admin API evolves with the app and a minor release may
      change its contract, so check that the routes you are about to use are declared.
-   - `GET /_admin/api/config`: the startup settings the test depends on (backend, proxy fallback,
-     delays) cannot be changed through the API yet; the test environment prepares them, and you
-     check them in `effective`.
+   - `GET /_admin/api/config`: the settings the test depends on (backend, proxy fallback,
+     delays), read in `effective`. Overrides left by an earlier session last until the engine
+     restarts, so never assume the startup values. Newer engines let you set them in step 3;
+     older ones need the test environment to prepare them.
    - If `/info` or the spec is missing (engines up to Mockxy 1.3.2), or anything does not match,
      **stop before any change** and say which update or configuration is needed. Never discover
      a capability by trying a write.
@@ -32,7 +33,9 @@ workspace unless they asked for it.
    the running scenario — fine when the setup reactivates and resets it anyway, otherwise prepare
    a separate variant. If a create's outcome is uncertain (timeout, dropped connection), read the
    catalog again before retrying.
-3. **Activate**, only after preparing succeeded: `PATCH /server` with
+3. **Activate**, only after preparing succeeded: the runtime settings the test depends on with
+   `PATCH /config` and `set` (newer engines, see
+   [Runtime configuration](admin-api.md#runtime-configuration)), `PATCH /server` with
    `{ "serverEnabled": true, "proxyAll": false }` when the test needs the mocks, select the
    intended variants (`PUT /mocks/:id` with `selectedResponseFile`), enable the endpoints
    (`PATCH /mocks/enabled`).
@@ -54,8 +57,8 @@ workspace unless they asked for it.
 
 - Changes made by an editor, the watcher or another process do not go through the admin API's
   mutation queue: the one-at-a-time guarantee and the revision checks cover API calls only.
-- Sequence cursors, handler memory, shared state and the monitor live in memory and start over
-  when the engine restarts. The sequence reset also clears that endpoint's handler memory but
+- Sequence cursors, handler memory, shared state, the monitor and runtime overrides live in
+  memory and start over when the engine restarts. The sequence reset also clears that endpoint's handler memory but
   needs a selected sequence; the memory of an ordinary handler has no reset. A test that needs it
   clean runs on a fresh engine.
 
@@ -95,6 +98,9 @@ async function setUpOrders() {
   for (const route of ["/mocks/{id}/responses/{responseFileName}:", "/monitoring/requests/{id}:"]) {
     if (!spec.includes(route)) throw new Error(`Update Mockxy: ${route} is not available`);
   }
+  if (!spec.includes("operationId: patchRuntimeConfig")) {
+    throw new Error("Update Mockxy: PATCH /config is not available");
+  }
 
   // 2. Resolve by method and path; prepare with the revision just read.
   const { items } = await admin("GET", "/mocks");
@@ -111,7 +117,8 @@ async function setUpOrders() {
     expectedRevision: variant.revision,
   });
 
-  // 3. Activate.
+  // 3. Activate. Overrides left by an earlier run last until a restart: state the settings too.
+  await admin("PATCH", "/config", { set: { proxyFallbackEnabled: false, globalDelayMs: 0 } });
   await admin("PATCH", "/server", { serverEnabled: true, proxyAll: false });
   await admin("PUT", `/mocks/${orders.id}`, { selectedResponseFile: "001.response.json" });
   await admin("PATCH", "/mocks/enabled", { ids: [orders.id], enabled: true });
