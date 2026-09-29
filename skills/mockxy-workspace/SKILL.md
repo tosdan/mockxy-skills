@@ -121,14 +121,32 @@ hot reload picks it up. Use it unless there is a reason not to.
 
 The **admin API** under `/_admin/api` is the alternative when a Mockxy server is already running
 and the user wants a live change, a runtime action files cannot express (resetting a sequence
-cursor or handler shared state, pushing an SSE/WS message) or an OpenAPI import —
-[references/admin-api.md](references/admin-api.md). Never start a server, import a spec or mutate
-a running instance without the user asking. In newer engines a `2xx` confirms the change is
-served; on a failure branch on `details.code`, and after a batch read the per-item outcomes even
-with `201` — [Outcome of a mutation](references/admin-api.md#outcome-of-a-mutation).
-When editing through the API, send the revision you read as `expectedRevision` and handle a
-`409 REVISION_CONFLICT` by reading again, never by retrying blindly —
-[Editing with a precondition](references/admin-api.md#editing-with-a-precondition).
+cursor or handler shared state, pushing an SSE/WS message, reading captured traffic) or an OpenAPI
+import — [references/admin-api.md](references/admin-api.md). Never start a server, import a spec
+or mutate a running instance without the user asking.
+
+Working live:
+
+1. **Identify the instance.** `GET /info` must report the user's `workspace`; keep its
+   `runtimeId` (a new one means the engine restarted). The admin API evolves with the app and a
+   minor release may change it: read `GET /openapi.yaml` before relying on a newer capability. If
+   `/info` or the spec is missing, or a route you need is not declared, stop before any change and
+   say which update is needed — never probe with a write.
+2. **Read, prepare, then activate.** Resolve endpoints by method and path and variants by file
+   name, not by title or the current selection. Create with `select: false`, save with the
+   revision you read as `expectedRevision`, check `active` (a step of the selected sequence is
+   served even when not selected), and only then select, enable and reset —
+   [Editing with a precondition](references/admin-api.md#editing-with-a-precondition).
+3. **Confirm the outcome.** A `2xx` means the change is served; on a failure branch on
+   `details.code`, and after a batch read the per-item outcomes even with `201` —
+   [Outcome of a mutation](references/admin-api.md#outcome-of-a-mutation). Never retry a create
+   or a `409 REVISION_CONFLICT` blindly: read first.
+4. **Verify with traffic** taken after a monitor cursor you read before the action —
+   [Reading the monitor](references/admin-api.md#reading-the-monitor).
+
+To put an instance into a known state for a test, from whatever state it is in and without
+restoring anything afterwards, follow [references/scenario-setup.md](references/scenario-setup.md),
+which includes a Playwright example.
 
 ## Before reporting the work done
 

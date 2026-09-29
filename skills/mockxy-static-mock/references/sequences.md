@@ -61,6 +61,12 @@ several steps.
 Steps may reference **`mock` and `handler` variants only**. Nested `sequence` responses and
 `middleware`, `sse` or `ws` variants are validation errors that take the endpoint down.
 
+A variant used as a step of the **selected** sequence is served just like the selected one, even
+though it is not `selectedResponseFile`: editing its file, or updating it through the admin API,
+changes the running scenario. `GET /_admin/api/mocks/:id/responses/:file` reports it with
+`active: true`. To revise a step without touching a scenario in progress, prepare a separate
+variant (and a separate sequence) and select it when ready.
+
 ### `onEnd`
 
 - `"stay"` — once the last step is exhausted, keep answering with it.

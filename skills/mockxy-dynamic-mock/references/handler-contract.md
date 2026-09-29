@@ -55,7 +55,11 @@ their presence in the script is a validation error.
   between its variants): the memory for counters, per-resource state machines
   (`state[params.id] = ...`), outcomes depending on history. It is **ephemeral and local to the
   engine** — not a database: it resets on restart and on sequence reset, but survives hot reload,
-  so iterating on the script does not restart the test.
+  so iterating on the script does not restart the test. The sequence reset
+  (`POST /_admin/api/mocks/:id/sequence/reset`) only works while a sequence is selected on that
+  endpoint: there is no reset for the memory of an ordinary handler. A test that needs it clean
+  either runs on a fresh engine or relies on a reset the workspace documents (for example a
+  shared-state resource instead of `state`).
 - **`callCount`** — progressive number of invocations of the handler for this endpoint (1 on the
   first), same lifetime as `state`.
 - **`firstRequestAt`** — timestamp (epoch ms) of the first invocation: `Date.now() -
