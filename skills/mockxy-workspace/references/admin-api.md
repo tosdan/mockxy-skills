@@ -8,7 +8,7 @@ running and one of these applies:
 
 - the user explicitly wants a live change against the running instance;
 - the action has no on-disk representation: resetting a sequence cursor, pushing a message into an
-  SSE or WebSocket console, reading the monitor;
+  SSE or WebSocket console, reading the monitor or turning captured traffic into mocks;
 - you are importing an OpenAPI specification, which the engine turns into many endpoints at once.
 
 **Never start a server, import a specification or mutate a running instance unless the user asked
@@ -16,12 +16,12 @@ for it.** These are outward-facing, hard-to-undo actions: `DELETE` routes erase 
 their variants for good.
 
 **The contract evolves with the app.** A minor Mockxy release may change the admin API. Before
-relying on a newer capability (revisions, inactive variants, the paged monitor), read the running
-version from `GET /info` and its contract from `GET /openapi.yaml`, and check that the routes you
-need are declared. Updating these skills does not update the user's installation: if the running
-engine lacks `/info` or the spec, say you cannot verify the contract and stop before any change
-that depends on the newer behavior, naming the update needed. To prepare a whole scenario for a
-test, see [scenario-setup.md](scenario-setup.md).
+relying on a newer capability (revisions, inactive variants, the paged monitor, mocks from the
+monitor), read the running version from `GET /info` and its contract from `GET /openapi.yaml`, and
+check that the routes you need are declared. Updating these skills does not update the user's
+installation: if the running engine lacks `/info` or the spec, say you cannot verify the contract
+and stop before any change that depends on the newer behavior, naming the update needed. To prepare
+a whole scenario for a test, see [scenario-setup.md](scenario-setup.md).
 
 ## When it answers
 
@@ -75,13 +75,14 @@ pushes do not wait for them.
 - **A lost response does not authorize a blind retry.** If a create timed out or the connection
   dropped, read the catalog (or `GET /mocks/resolve`) first: repeating it may answer `409` with
   `details.existingMockId` because the first attempt succeeded.
-- **Batches** (`POST /mocks/import/openapi`, `POST /monitoring/dumps/create-mocks`) keep the items
-  that succeeded. Read the per-item outcome even with `201`: `items[].writeOutcome`
-  (`created`, `skipped`, `failed`), `items[].runtimeOutcome` (`applied`, `not_applied`,
-  `not_applicable`) with the reason in `items[].error`, and `runtime.status` (`applied`, or
-  `degraded` when some endpoint files fail to load). The counts only describe what was written.
-  **Stop the setup if one of your own resources is `not_applied`** and report it. A failed final
-  reload answers `500 BATCH_RUNTIME_FAILED`; an item whose restore failed stops the batch with
+- **Batches** (`POST /mocks/import/openapi`, `POST /monitoring/requests/create-mocks`,
+  `POST /monitoring/dumps/create-mocks`) keep the items that succeeded. Read the per-item outcome
+  even with `201`: `items[].writeOutcome` (`created`, `skipped`, `failed`, and `variant_added`
+  from traffic), `items[].runtimeOutcome` (`applied`, `not_applied`, `not_applicable`) with the
+  reason in `items[].error`, and `runtime.status` (`applied`, or `degraded` when some endpoint
+  files fail to load). The counts only describe what was written. **Stop the setup if one of
+  your own resources is `not_applied`** and report it. A failed final reload answers
+  `500 BATCH_RUNTIME_FAILED`; an item whose restore failed stops the batch with
   `500 ROLLBACK_FAILED`. Both carry the partial result in `details.result`.
 
 ## Editing with a precondition
@@ -177,14 +178,15 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `DELETE /files/:name` | deletes a data file |
 | `GET /monitoring/requests` | captured traffic kept in memory (up to 250 entries): without a query every entry, complete, most recent first; with `view=page` a cursor page ([Reading the monitor](#reading-the-monitor)) |
 | `GET /monitoring/requests/:id?runtimeId=…` | one complete entry by id — `409 RUNTIME_CHANGED` after a restart, `404 REQUEST_NOT_AVAILABLE` once evicted or cleared |
+| `POST /monitoring/requests/create-mocks` | creates mocks from monitor entries, in the order given — `{ runtimeId, ids, onConflict, selectAddedVariants?, newEndpointEnabled }` ([Creating mocks from traffic](#creating-mocks-from-traffic)) |
 | `DELETE /monitoring/requests` | clears the in-memory traffic; dump files on disk are untouched |
-| `GET /monitoring/requests/stream` | Server-Sent Events: a `snapshot` of the current entries, then one event per new request and a `clear` event |
+| `GET /monitoring/requests/stream` | Server-Sent Events: a `snapshot` of the current entries (in newer engines with the `runtimeId` their ids belong to), then one event per new request and a `clear` event |
 | `GET /monitoring/dump` | state of the on-disk dump of captured traffic |
 | `PATCH /monitoring/dump` | turns the dump on or off and tunes it at runtime — `{ enabled?, intervalMs?, threshold? }`; only traffic captured after it is enabled is written |
 | `POST /monitoring/dump/flush` | flushes pending monitor entries — body `{}` |
 | `GET /monitoring/dumps` | lists the dump files |
 | `GET /monitoring/dumps/read?fileIndex&lineIndex&limit` | reads the dumps page by page, oldest first; every item carries a `dumpKey`; keep passing `nextCursor` until `done` |
-| `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic — `{ file }` for a whole dump file or `{ keys }` with `dumpKey` values; existing endpoints are skipped. Read `items` and `runtime` as described in [Outcome of a mutation](#outcome-of-a-mutation) |
+| `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic — `{ file }` for a whole dump file or `{ keys }` with `dumpKey` values, plus the options of the monitor route, optional here with the historical defaults (`skip`, no selection, new endpoints enabled). Read `items` and `runtime` as described in [Creating mocks from traffic](#creating-mocks-from-traffic) |
 | `DELETE /monitoring/dumps/:file` | deletes one dump file |
 | `GET /runtime/shared-state` | metadata, usage and limits of handler shared state; never values |
 | `POST /runtime/shared-state/:name/reset` | idempotently resets one resource — body `{}`; returns `{ name, reset }` |
@@ -218,6 +220,57 @@ assigned is `400 CURSOR_AHEAD`; any query parameter without `view=page`, or an u
 `400 INVALID_QUERY` with `details.parameter`. Read one entry in full with
 `GET /monitoring/requests/:id?runtimeId=…`. The monitor is a memory buffer, not an archive: use
 the dump for durable capture.
+
+## Creating mocks from traffic
+
+Newer engines turn captured responses into mocks on the server, with the rules the UI uses: from
+the monitor with `POST /monitoring/requests/create-mocks`, from the dump with
+`POST /monitoring/dumps/create-mocks`. Check that `GET /openapi.yaml` declares the monitor route
+before relying on it. Older engines have only the dump route, which accepts `{ file }` or
+`{ keys }` alone, skips existing endpoints and enables the new ones.
+
+The monitor body is `{ runtimeId, ids, onConflict, selectAddedVariants?, newEndpointEnabled }`:
+
+- `runtimeId` is the one of the page (`cursor.runtimeId`) or of the stream `snapshot` the `ids`
+  come from, because ids restart at every start: another runtime answers `409 RUNTIME_CHANGED`
+  and writes nothing. `ids` are 1–250 distinct decimal strings, processed in the order given.
+- `onConflict` is required. The conflict is on the destination's exact method and route, against
+  the catalog and the earlier items of the same batch. `skip` leaves that endpoint as it is;
+  `add-variant` adds the capture as a new variant, selected only with
+  `selectAddedVariants: true`, and keeps the endpoint's enabled state.
+- `newEndpointEnabled` is required: a capture never activates anything implicitly.
+
+The dump route takes the same options next to `{ file }` or `{ keys }`, all optional there, with
+the historical defaults `onConflict: "skip"`, `selectAddedVariants: false`,
+`newEndpointEnabled: true`.
+
+**Prepare, check, then activate.** To add traffic without touching what is served, send
+`newEndpointEnabled: false`, and `onConflict: "add-variant"` with `selectAddedVariants: false`.
+Then read every item, even with `201`:
+
+- `writeOutcome`: `created`, `variant_added`, `skipped` or `failed` with `error`. Several
+  endpoints matching the same destination fail the item with `candidates`: choose with the user,
+  never at random.
+- `captureOutcome`: `complete`, `incomplete`, or `unavailable` for an entry evicted or cleared
+  before the batch ran (the other items go on).
+- `warnings`: `INCOMPLETE_CAPTURE` with `reason` `truncated` or `binary` means the body became
+  `{}` and the draft is marked `[da completare]` (endpoint description or variant title). It is
+  **not** a copy of the real response: complete it before serving it. `SUPERSEDED` with `by`
+  means a later item of the batch selected another variant on the same endpoint, so this one is
+  not served.
+- `id` and `responseFile`, to select and enable deliberately afterwards; from the monitor also
+  `requestId` and `counts`, from the dump the entry's `key` and the historical counts.
+
+The conversion takes the route that served the request, or the request path (no parametric route
+is inferred), the uppercase method, the captured status and `delayMs` 0. A JSON body becomes its
+value, other text stays a string. Headers lose `content-length`, `content-encoding`,
+`transfer-encoding`, `connection`, `keep-alive`, `date`, empty values and masked `***` values (a
+masked value is never restored). Neither captures nor dump files are deleted.
+
+**A batch is not idempotent.** If the answer is lost, do not send it again: read the catalog and
+stop unless you can tell with certainty which items were written. A batch that fails after
+writing (`500 BATCH_RUNTIME_FAILED` or `ROLLBACK_FAILED`) reports what was written in
+`details.result`, in the shape of the `201`.
 
 ## OpenAPI import
 

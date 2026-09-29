@@ -74,6 +74,14 @@ Keep the full case, the empty list and the error side by side, and switch betwee
 When adding a variant to an existing endpoint: write the file, append its name to `responseFiles`,
 and only change `selectedResponseFile` if the new variant should answer now.
 
+**From captured traffic.** When the user wants a response captured by a running Mockxy (its
+monitor or dump) turned into a mock, let the engine convert it through the admin API — the
+`mockxy-workspace` skill, *Creating mocks from traffic*: it applies the rules the UI uses and
+flags a truncated or binary body as an incomplete draft instead of inventing it. Write a captured
+response by hand only when it comes from elsewhere (a HAR file, a log, a paste): keep the status,
+drop transport headers (`content-length`, `content-encoding`, `transfer-encoding`, `connection`,
+`keep-alive`, `date`), and never write a masked or truncated value as if it were real.
+
 ## Lists answer filters and pagination for free
 
 When a JSON `body` is an **array**, or an object with **exactly one** top-level array property,
