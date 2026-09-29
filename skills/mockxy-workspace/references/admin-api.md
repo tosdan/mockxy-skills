@@ -167,7 +167,8 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `PUT /files/:name` | creates (`201`) or replaces (`200`) — raw bytes up to 25 MB, JSON-validated |
 | `PATCH /files/:name` | renames — `{ name, rewriteReferences }` |
 | `DELETE /files/:name` | deletes a data file |
-| `GET /monitoring/requests` | captured traffic kept in memory (up to 250 entries), most recent first |
+| `GET /monitoring/requests` | captured traffic kept in memory (up to 250 entries): without a query every entry, complete, most recent first; with `view=page` a cursor page ([Reading the monitor](#reading-the-monitor)) |
+| `GET /monitoring/requests/:id?runtimeId=…` | one complete entry by id — `409 RUNTIME_CHANGED` after a restart, `404 REQUEST_NOT_AVAILABLE` once evicted or cleared |
 | `DELETE /monitoring/requests` | clears the in-memory traffic; dump files on disk are untouched |
 | `GET /monitoring/requests/stream` | Server-Sent Events: a `snapshot` of the current entries, then one event per new request and a `clear` event |
 | `GET /monitoring/dump` | state of the on-disk dump of captured traffic |
@@ -185,6 +186,30 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `GET /config` | effective configuration, read-only — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
 | `GET /runtime/status` | outcome of the last load of the workspace, `200` even when degraded or failed — `lastAttempt` (`reasons` among `startup`, `admin`, `watcher`; `status` `applied`, `degraded` or `failed`), per-file `errors` with `serving: retained` (previous version still served) or `missing`, and `fatalError`; only the last attempt |
 | `GET /openapi.yaml` | the OpenAPI contract of the running version, as `application/yaml` |
+
+## Reading the monitor
+
+To check what a test or a browser action produced, read only the traffic after a cursor taken
+**before** the action (newer engines; up to Mockxy 1.3.2 the route ignores every query parameter):
+
+1. `GET /monitoring/requests?view=page&since=latest` — no items, and a `cursor`
+   `{ runtimeId, generation, since }` pointing at "now". Take one per filter set you will use.
+2. Run the action.
+3. `GET /monitoring/requests?view=page&since=…&runtimeId=…&generation=…` with the cursor values
+   and your filters (`method`, `path` without query string, `status`, `source`; exact match,
+   combined with AND). Items come **oldest first**; `fields=summary` (default) has no bodies or
+   headers, `fields=full` the complete entry. Keep sending back `cursor` while `hasMore` is
+   `true`. Keep the same filters for the whole read; `limit` (1–250, default 50) and `fields`
+   may change.
+
+**Check `gap` on every page.** `gap: true` with `gapReason` `runtime_changed` (the engine
+restarted), `cleared` (someone emptied the monitor) or `evicted` (entries after your cursor were
+pushed out of the 250-entry buffer) means part of the range is lost: an empty `items` then does
+**not** mean "no requests". Report it instead of concluding. A `since` beyond the last id
+assigned is `400 CURSOR_AHEAD`; any query parameter without `view=page`, or an unknown one, is
+`400 INVALID_QUERY` with `details.parameter`. Read one entry in full with
+`GET /monitoring/requests/:id?runtimeId=…`. The monitor is a memory buffer, not an archive: use
+the dump for durable capture.
 
 ## OpenAPI import
 
