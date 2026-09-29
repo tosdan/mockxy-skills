@@ -25,7 +25,9 @@ workspace unless they asked for it.
 2. **Prepare the content.** Resolve every endpoint from `GET /mocks` by exact method and path,
    and every variant by file name — never by title, never from the current selection. For each
    variant: `GET /mocks/:id/responses/:file`, then `PUT` the content with the `revision` you read
-   as `expectedRevision`. Create missing variants with `select: false`. Check `active` first: a
+   as `expectedRevision`. **State every field the test depends on**: an update keeps the fields it
+   omits, so a `delayMs` or `templated` left by an earlier run would survive. Create missing
+   variants with `select: false`. Check `active` first: a
    variant that is not selected may be a step of the selected sequence, and rewriting it changes
    the running scenario — fine when the setup reactivates and resets it anyway, otherwise prepare
    a separate variant. If a create's outcome is uncertain (timeout, dropped connection), read the
@@ -103,6 +105,8 @@ async function setUpOrders() {
     type: "mock",
     status: 200,
     headers: { "content-type": "application/json" },
+    delayMs: 0, // an update keeps omitted fields: a delay left by an earlier run would survive
+    templated: false,
     body: { orders: [{ id: "o-1" }] },
     expectedRevision: variant.revision,
   });
