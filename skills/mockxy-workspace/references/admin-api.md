@@ -15,6 +15,14 @@ running and one of these applies:
 for it.** These are outward-facing, hard-to-undo actions: `DELETE` routes erase endpoint files and
 their variants for good.
 
+**The contract evolves with the app.** A minor Mockxy release may change the admin API. Before
+relying on a newer capability (revisions, inactive variants, the paged monitor), read the running
+version from `GET /info` and its contract from `GET /openapi.yaml`, and check that the routes you
+need are declared. Updating these skills does not update the user's installation: if the running
+engine lacks `/info` or the spec, say you cannot verify the contract and stop before any change
+that depends on the newer behavior, naming the update needed. To prepare a whole scenario for a
+test, see [scenario-setup.md](scenario-setup.md).
+
 ## When it answers
 
 - **Check which instance answers** before changing anything: `GET /info` reports the
