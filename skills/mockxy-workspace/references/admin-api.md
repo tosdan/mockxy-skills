@@ -297,7 +297,10 @@ The conversion takes the route that served the request, or the request path (no 
 is inferred), the uppercase method, the captured status and `delayMs` 0. A JSON body becomes its
 value, other text stays a string. Headers lose `content-length`, `content-encoding`,
 `transfer-encoding`, `connection`, `keep-alive`, `date`, empty values and masked `***` values (a
-masked value is never restored). Neither captures nor dump files are deleted.
+masked value is never restored). Newer engines also drop Mockxy's own `x-mock-source`, which
+serving sets by itself; with an older one, a mock created from a backend capture stores
+`x-mock-source: backend`, harmless because serving replaces it, and you may remove it. Neither
+captures nor dump files are deleted.
 
 **A batch is not idempotent.** If the answer is lost, do not send it again: read the catalog and
 stop unless you can tell with certainty which items were written. A batch that fails after

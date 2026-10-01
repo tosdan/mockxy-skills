@@ -80,7 +80,8 @@ monitor or dump) turned into a mock, let the engine convert it through the admin
 flags a truncated or binary body as an incomplete draft instead of inventing it. Write a captured
 response by hand only when it comes from elsewhere (a HAR file, a log, a paste): keep the status,
 drop transport headers (`content-length`, `content-encoding`, `transfer-encoding`, `connection`,
-`keep-alive`, `date`), and never write a masked or truncated value as if it were real.
+`keep-alive`, `date`) and Mockxy's own `x-mock-source` if the capture went through Mockxy, and
+never write a masked or truncated value as if it were real.
 
 ## Lists answer filters and pagination for free
 
