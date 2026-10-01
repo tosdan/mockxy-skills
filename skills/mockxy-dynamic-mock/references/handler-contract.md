@@ -31,6 +31,31 @@ A CommonJS module exporting an object with **`resolveResponse`** (sync or `async
 `require` other local files with relative paths: the engine tracks those dependencies and
 recompiles when the source **or one of its dependencies** changes on disk.
 
+### Helpers shared across endpoints
+
+Code used by several handlers goes in a folder at the root of the mocks directory, by convention
+`_shared`, and the script imports it **from the mocks root** (newer engines; up to Mockxy 1.4.2
+only relative paths resolve):
+
+```js
+const flow = require("_shared/payment-flow");
+
+module.exports = { resolveResponse: flow.cancel };
+```
+
+The string is the same at any folder depth, so copying the endpoint to a route of a different
+depth keeps the reference valid. A relative path such as `"../../../_shared/payment-flow"` depends
+on the depth instead: it breaks when the endpoint changes level, and can silently resolve a
+different file with the same name.
+
+- Root imports apply to the **handler and middleware scripts** only. Helpers import each other
+  with relative paths (`require("./payment-data")` inside `_shared/`).
+- Packages in `node_modules` take precedence over the mocks root. `_shared` cannot collide with a
+  published npm package, because npm rejects names starting with `_`.
+- Moving or renaming a helper means updating every `require` that names it; with root imports the
+  string is identical in every script, so a single search and replace does it.
+- Changes to a helper are tracked like any other dependency and recompile the scripts using it.
+
 It must **not** declare `method`, `path` or `disabled`: routing belongs to the endpoint file, and
 their presence in the script is a validation error.
 

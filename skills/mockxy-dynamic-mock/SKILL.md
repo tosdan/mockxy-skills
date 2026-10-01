@@ -75,6 +75,9 @@ A CommonJS module exporting an object with **`resolveResponse`** (sync or `async
   most one of `jsonBody` and `body`; neither means no body.
 - The script must **not** declare `method`, `path` or `disabled`: routing belongs to the endpoint
   file, and declaring them is a validation error.
+- Code shared by several handlers lives in `<mocks>/_shared/` and is imported from the mocks root,
+  `require("_shared/<helper>")`, never with a depth-dependent `../../` path (newer engines; up to
+  Mockxy 1.4.2 only relative paths resolve). Helpers import each other relatively.
 
 Full contract, error handling, timeouts and limits:
 [references/handler-contract.md](references/handler-contract.md).

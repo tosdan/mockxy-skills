@@ -169,3 +169,63 @@ test("reports an invalid selected target type without a redundant allowlist erro
   ));
   assert(!messages(result.report).some((message) => message.includes("is a null")));
 });
+
+function createScriptWorkspace(handlers) {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "mockxy-skills-scripts-"));
+  const mocksDir = path.join(workspace, "mocks");
+  writeJson(path.join(workspace, "mockxy.json"), { formatVersion: 1 });
+  fs.mkdirSync(path.join(mocksDir, "_shared"), { recursive: true });
+  fs.writeFileSync(path.join(mocksDir, "_shared", "data.js"), "module.exports = { value: 1 };\n");
+  fs.writeFileSync(
+    path.join(mocksDir, "_shared", "flow.js"),
+    "const data = require(\"./data\");\nmodule.exports = { read: () => data.value };\n"
+  );
+  for (const { folder, routePath, specifier } of handlers) {
+    const endpointDir = path.join(mocksDir, ...folder.split("/"));
+    writeJson(path.join(endpointDir, "GET.endpoint.json"), {
+      method: "GET",
+      path: routePath,
+      enabled: true,
+      responseFiles: ["001.response.json"],
+      selectedResponseFile: "001.response.json",
+    });
+    writeJson(path.join(endpointDir, "GET.responses", "001.response.json"), {
+      type: "handler",
+      sourceFile: "001.handler.js",
+    });
+    fs.writeFileSync(
+      path.join(endpointDir, "GET.responses", "001.handler.js"),
+      `const flow = require(${JSON.stringify(specifier)});\n` +
+        "module.exports = { async resolveResponse() { return { jsonBody: { value: flow.read() } }; } };\n"
+    );
+  }
+  return workspace;
+}
+
+test("loads handlers importing a shared helper from the mocks root at any depth", (t) => {
+  const workspace = createScriptWorkspace([
+    { folder: "a", routePath: "/a", specifier: "_shared/flow" },
+    { folder: "a/b/c", routePath: "/a/b/c", specifier: "_shared/flow" },
+    { folder: "rel", routePath: "/rel", specifier: "../../_shared/flow" },
+  ]);
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+
+  const result = validateWorkspace(workspace);
+
+  assert.equal(result.exitCode, 0, messages(result.report).join("\n"));
+  assert.equal(result.report.scriptsLoaded, true);
+});
+
+test("reports a relative require that does not resolve at the handler's depth", (t) => {
+  const workspace = createScriptWorkspace([
+    { folder: "a/b/c", routePath: "/a/b/c", specifier: "../../_shared/flow" },
+  ]);
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+
+  const result = validateWorkspace(workspace);
+
+  assert.equal(result.exitCode, 1);
+  assert(messages(result.report).some(
+    (message) => message.startsWith("001.handler.js could not be loaded: Cannot find module '../../_shared/flow'")
+  ));
+});

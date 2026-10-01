@@ -24,6 +24,7 @@
 // selected is inert until someone selects it, so it is a warning.
 
 const fs = require("fs");
+const Module = require("module");
 const path = require("path");
 
 const ENDPOINT_SUFFIX = ".endpoint.json";
@@ -491,6 +492,20 @@ function validateWsVariant(response, errors) {
   validatePresets(response.presets, errors, { allowEventAndId: false });
 }
 
+// Compiles a handler/middleware script the way the engine does (src/mocks/script-loader.js): the
+// mocks folder is appended to the resolution paths, after node_modules, so the script can import
+// shared helpers from the mocks root (`require("_shared/helper")`) at any depth. Only the script
+// itself gets the extra path; the modules it requires resolve with plain Node rules. A default
+// ES export takes precedence, as in the engine.
+function loadScriptDefinition(sourcePath, mocksDir) {
+  const scriptModule = new Module(sourcePath);
+  scriptModule.filename = sourcePath;
+  scriptModule.paths = [...Module._nodeModulePaths(path.dirname(sourcePath)), path.resolve(mocksDir)];
+  scriptModule._compile(fs.readFileSync(sourcePath, "utf8"), sourcePath);
+  const exported = scriptModule.exports;
+  return exported?.default || exported;
+}
+
 function validateScriptVariant(response, responseDir, type, errors, options) {
   const expectedSuffix = type === "handler" ? ".handler.js" : ".middleware.js";
   if (!isSafeLocalFileName(response.sourceFile, expectedSuffix)) {
@@ -510,8 +525,7 @@ function validateScriptVariant(response, responseDir, type, errors, options) {
   const requiredFunction = type === "handler" ? "resolveResponse" : "transformResponse";
   let definition;
   try {
-    delete require.cache[require.resolve(sourcePath)];
-    definition = require(sourcePath);
+    definition = loadScriptDefinition(sourcePath, options.mocksDir);
   } catch (loadError) {
     errors.push(`${response.sourceFile} could not be loaded: ${loadError.message}`);
     return sourcePath;
@@ -974,7 +988,7 @@ function validateWorkspace(targetPath, options = {}) {
   }
 
   workspaceRoot = target.root;
-  const validationOptions = { loadScripts: options.loadScripts !== false };
+  const validationOptions = { loadScripts: options.loadScripts !== false, mocksDir: target.mocksDir };
 
   if (target.checkMarker) {
     validateMarker(target.root);

@@ -8,8 +8,9 @@ specific frontend case, enriching a payload that is not complete yet.
 
 A middleware is attached to the endpoint through a response file of type `middleware` pointing at
 a `*.middleware.js` script. Everything that holds for handler scripts holds here too: CommonJS
-module, relative `require` with recompilation on change, no `method` / `path` / `disabled` in the
-script.
+module, local `require` with recompilation on change (relative paths, or shared helpers imported
+from the mocks root in newer engines — see [handler-contract.md](handler-contract.md#helpers-shared-across-endpoints)),
+no `method` / `path` / `disabled` in the script.
 
 **It only works with a backend configured** (`BACKEND_URL`, the workspace's backend setting, or
 a runtime override of `backendUrl` in newer engines — see the `mockxy-workspace` skill): with no
