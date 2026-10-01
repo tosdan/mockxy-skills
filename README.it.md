@@ -60,6 +60,20 @@ npx skills@latest add tosdan/mockxy-skills --skill '*'
 npx skills@latest add tosdan/mockxy-skills --skill mockxy-workspace --global
 ```
 
+### Installare la versione corrispondente al motore
+
+La sorgente `tosdan/mockxy-skills` installa le skill di `main`, che possono già descrivere
+funzioni della prossima release di Mockxy (segnalate come "newer engines" nei riferimenti). Per
+allinearle a un motore rilasciato, installa dalla tag con la stessa versione: ogni release di
+Mockxy dalla 1.4.2 in poi ha una tag `vX.Y.Z` anche qui.
+
+```sh
+npx skills@latest add https://github.com/tosdan/mockxy-skills/tree/v1.4.2 --skill '*' --global
+```
+
+Il motore in esecuzione riporta la sua versione in `GET /_admin/api/info`. Per cambiare versione,
+ripeti lo stesso comando con un'altra tag.
+
 ### Indicare l'agente sulla riga di comando
 
 `--agent` salta anche la domanda sugli agenti:
