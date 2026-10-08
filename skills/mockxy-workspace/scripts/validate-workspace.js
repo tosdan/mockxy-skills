@@ -1310,25 +1310,30 @@ function validateMarker(root) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-// First endpoint file under `rootDir`, without entering `skippedDir`.
-function findEndpointFile(rootDir, skippedDir) {
-  const stack = [rootDir];
+// First file the engine would read if `rootDir` were the mocks folder, looked for outside
+// `skippedDir`. It follows the very folders the engine follows, with no exception of its own: the
+// endpoint loader enters all of them, hidden ones included; the script validation all but
+// `node_modules`. A folder skipped here and read there would be content validated by halves.
+function findMocksContent(rootDir, skippedDir) {
+  const stack = [{ dir: rootDir, insideNodeModules: false }];
   while (stack.length > 0) {
-    const currentDir = stack.pop();
+    const { dir, insideNodeModules } = stack.pop();
     let entries;
     try {
-      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (_error) {
       continue;
     }
     for (const entry of entries) {
-      const entryPath = path.join(currentDir, entry.name);
+      const entryPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entryPath !== skippedDir && entry.name !== "node_modules" && !entry.name.startsWith(".")) {
-          stack.push(entryPath);
+        if (entryPath !== skippedDir) {
+          stack.push({ dir: entryPath, insideNodeModules: insideNodeModules || entry.name === "node_modules" });
         }
-      } else if (entry.isFile() && entry.name.endsWith(ENDPOINT_SUFFIX)) {
-        return entryPath;
+      } else if (entry.isFile()) {
+        if (entry.name.endsWith(ENDPOINT_SUFFIX) || (!insideNodeModules && SCRIPT_FILE_PATTERN.test(entry.name))) {
+          return entryPath;
+        }
       }
     }
   }
@@ -1348,8 +1353,8 @@ function findMocksFolderSign(folder) {
   if (isPlainObject(imports) && Object.keys(imports).some((key) => key.startsWith("#shared"))) {
     return `${PACKAGE_FILE} with the #shared alias`;
   }
-  const endpointFile = findEndpointFile(folder, path.join(folder, "mocks"));
-  return endpointFile == null ? null : path.relative(folder, endpointFile).split(path.sep).join("/");
+  const mocksContent = findMocksContent(folder, path.join(folder, "mocks"));
+  return mocksContent == null ? null : path.relative(folder, mocksContent).split(path.sep).join("/");
 }
 
 function asMocksFolder(mocksDir) {

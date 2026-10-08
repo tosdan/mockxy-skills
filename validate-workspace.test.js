@@ -629,6 +629,14 @@ test("every sign of a mocks folder is enough to refuse a folder with a mocks sub
     _shared: (folder) => fs.mkdirSync(path.join(folder, "_shared")),
     "package.json with the #shared alias": (folder) => writeJson(path.join(folder, "package.json"), STANDARD_PACKAGE),
     "other/GET.endpoint.json": (folder) => writeJson(path.join(folder, "other", "GET.endpoint.json"), {}),
+    // The loader enters hidden folders and node_modules too: what they hold is mocks content.
+    ".private/GET.endpoint.json": (folder) => writeJson(path.join(folder, ".private", "GET.endpoint.json"), {}),
+    "node_modules/x/GET.endpoint.json": (folder) => writeJson(path.join(folder, "node_modules", "x", "GET.endpoint.json"), {}),
+    // A script with no endpoint file: the loader ignores it, the full validation loads it.
+    "orphan/001.handler.js": (folder) => {
+      fs.mkdirSync(path.join(folder, "orphan"));
+      fs.writeFileSync(path.join(folder, "orphan", "001.handler.js"), "");
+    },
   };
   for (const [sign, create] of Object.entries(signs)) {
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), "mockxy-skills-ambiguous-"));
@@ -640,6 +648,62 @@ test("every sign of a mocks folder is enough to refuse a folder with a mocks sub
 
     assert.match(validateWorkspace(folder).report.fatal, new RegExp(`but also ${sign.replace(/[.#/]/g, "\\$&")}, as a mocks folder does`));
   }
+});
+
+test("a script inside node_modules is not mocks content: the validation never reads it", (t) => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "mockxy-skills-ambiguous-"));
+  removeAfter(t, folder);
+  fs.mkdirSync(path.join(folder, "mocks"));
+  fs.mkdirSync(path.join(folder, "node_modules", "package"), { recursive: true });
+  fs.writeFileSync(path.join(folder, "node_modules", "package", "001.handler.js"), "");
+
+  assert.equal(validateWorkspace(folder).report.fatal, undefined);
+});
+
+// A headless mocks folder whose only sign is an endpoint in a hidden folder, next to the endpoint
+// `/mocks`: no marker, package, _shared or collections.
+function createHiddenEndpointFolder(t) {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "mockxy-skills-hidden-"));
+  removeAfter(t, folder);
+  const sources = {
+    mocks: "module.exports = { resolveResponse: () => ({ jsonBody: {} }) };\n",
+    ".private": "module.exports = { resolveResponse: () => ({ jsonBody: require(\"./helper.js\") }) };\n",
+  };
+  for (const [name, source] of Object.entries(sources)) {
+    writeJson(path.join(folder, name, "GET.endpoint.json"), {
+      method: "GET",
+      path: `/${name}`,
+      enabled: true,
+      responseFiles: ["001.response.json"],
+      selectedResponseFile: "001.response.json",
+    });
+    writeJson(path.join(folder, name, "GET.responses", "001.response.json"), { type: "handler", sourceFile: "001.handler.js" });
+    fs.writeFileSync(path.join(folder, name, "GET.responses", "001.handler.js"), source);
+  }
+  fs.writeFileSync(path.join(folder, ".private", "GET.responses", "helper.js"), "module.exports = 1;\n");
+  return folder;
+}
+
+test("a mocks folder with an endpoint in a hidden folder next to mocks/ is refused, and nothing is written", (t) => {
+  const folder = createHiddenEndpointFolder(t);
+  const ran = path.join(os.tmpdir(), `mockxy-skills-ran-${process.pid}.txt`);
+  t.after(() => fs.rmSync(ran, { force: true }));
+  const engineDir = createFakeEngine(t, { script: `require("fs").writeFileSync(${JSON.stringify(ran)}, "x");\n` });
+  const snapshot = () => fs.readdirSync(folder, { recursive: true }).sort();
+  const before = snapshot();
+
+  const result = validateWorkspace(folder, { engineDir });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.report.fatal, /but also \.private\/GET\.endpoint\.json, as a mocks folder does/);
+  // Refused before anything runs: no engine, no script, no file created.
+  assert.equal(fs.existsSync(ran), false);
+  assert.deepEqual(snapshot(), before);
+
+  const exact = validateWorkspace(null, { mocksDir: folder });
+  assert.equal(exact.report.mocksDir, folder);
+  assert.equal(exact.report.endpoints, 2);
+  assert.equal(exact.report.scripts, 2);
 });
 
 test("--engine-dir names the mocks folder unambiguously when it holds a /mocks endpoint", (t) => {
@@ -730,4 +794,17 @@ test("the real engine checks the whole mocks folder when it holds a /mocks endpo
       ["SCRIPT_LATE_REQUIRE"]
     );
   }
+});
+
+test("the real engine checks a hidden endpoint folder when the mocks folder is named with --mocks-dir", { skip: !realEngineAvailable }, (t) => {
+  const folder = createHiddenEndpointFolder(t);
+
+  const result = validateWorkspace(null, { mocksDir: folder, engineDir: realEngineDir });
+
+  assert.equal(result.report.scriptContract.status, "checked", JSON.stringify(result.report.scriptContract));
+  assert.equal(result.report.scripts, 2);
+  assert.deepEqual(
+    result.report.findings.filter((finding) => finding.code != null).map((finding) => [finding.code, finding.file]),
+    [["SCRIPT_LATE_REQUIRE", `${path.basename(folder)}/.private/GET.responses/001.handler.js`]]
+  );
 });
