@@ -391,6 +391,26 @@ function createFakeEngine(t, { version = "1.6.0", withCommand = true, script }) 
   return engineDir;
 }
 
+// The validate command of the engine, reduced to what matters here: it takes a folder holding a
+// `mocks` subfolder for a workspace root (src/cli-validate.js), and its report names the folder it
+// validated. `pinnedMocksDir` makes it report another folder, whatever it is asked.
+function fakeValidateCommand({ noise = false, report = ENGINE_REPORT, pinnedMocksDir = null } = {}) {
+  return [
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "const [command, target, flag] = process.argv.slice(2);",
+    "const nested = path.join(target, 'mocks');",
+    `const mocksDir = ${JSON.stringify(pinnedMocksDir)} || (fs.existsSync(nested) ? nested : target);`,
+    noise ? "console.log('{');\nconsole.log('noise from a script');" : "",
+    `const report = ${JSON.stringify(report)};`,
+    "console.log(JSON.stringify({ ...report, mocksDir, command, flag }, null, 2));",
+    "process.exitCode = report.ok ? 0 : 1;",
+    "",
+  ].join("\n");
+}
+
+const CLEAN_ENGINE_REPORT = { ok: true, scripts: 0, errors: [], warnings: [] };
+
 const ENGINE_REPORT = {
   ok: false,
   scripts: 1,
@@ -413,14 +433,7 @@ test("--engine-dir takes the findings of the engine's validate command", (t) => 
     `require("fs").writeFileSync(${JSON.stringify(marker)}, "x");\n`
   );
   // Prints noise first, as the top level of a script could, then the report of the real command.
-  const engineDir = createFakeEngine(t, {
-    script:
-      "const [command, mocksDir, flag] = process.argv.slice(2);\n" +
-      "console.log('{');\nconsole.log('noise from a script');\n" +
-      `const report = ${JSON.stringify(ENGINE_REPORT)};\n` +
-      "console.log(JSON.stringify({ ...report, mocksDir, command, flag }, null, 2));\n" +
-      "process.exitCode = 1;\n",
-  });
+  const engineDir = createFakeEngine(t, { script: fakeValidateCommand({ noise: true }) });
 
   const result = validateWorkspace(workspace, { engineDir });
 
@@ -479,7 +492,7 @@ test("--engine-dir rejects a folder that is not Mockxy", (t) => {
 
 // A stand-in for the admin API: /info names the mocks folder it serves, /scripts/validate answers
 // only the request the engine accepts (JSON media type, body exactly {}).
-async function startFakeServer(t, { mocksDir, validate = true }) {
+async function startFakeServer(t, { mocksDir, validate = true, reportedMocksDir = mocksDir }) {
   const calls = [];
   const server = http.createServer((request, response) => {
     let body = "";
@@ -496,7 +509,7 @@ async function startFakeServer(t, { mocksDir, validate = true }) {
         send(200, { version: "1.6.0", workspace: { mocksDir } });
       } else if (validate && request.method === "POST" && request.url === "/_admin/api/scripts/validate") {
         const accepted = request.headers["content-type"] === "application/json" && body === "{}";
-        send(accepted ? 200 : 415, accepted ? ENGINE_REPORT : { error: "Unsupported Media Type" });
+        send(accepted ? 200 : 415, accepted ? { ...ENGINE_REPORT, mocksDir: reportedMocksDir } : { error: "Unsupported Media Type" });
       } else {
         send(404, { error: "Not Found", details: { code: "ADMIN_ROUTE_NOT_FOUND" } });
       }
@@ -558,6 +571,76 @@ test("--server-url says when the engine is too old or does not answer", async (t
   assert.match(silent.report.scriptContract.reason, /^no usable answer from http:\/\/127\.0\.0\.1:1\/_admin\/api\/info/);
 });
 
+// A mocks folder may contain a folder named `mocks`: the endpoint `/mocks`. The engine's command
+// reads a folder with a `mocks` subfolder as a workspace root, so handing it the mocks folder
+// would validate only that endpoint and certify the rest unseen.
+function createWorkspaceWithMocksEndpoint(t) {
+  const workspace = createScriptWorkspace([{ folder: "late", routePath: "/late", source: LATE_REQUIRE_HANDLER }]);
+  removeAfter(t, workspace);
+  const endpointDir = path.join(workspace, "mocks", "mocks");
+  writeJson(path.join(endpointDir, "GET.endpoint.json"), {
+    method: "GET",
+    path: "/mocks",
+    enabled: true,
+    responseFiles: ["001.response.json"],
+    selectedResponseFile: "001.response.json",
+  });
+  writeJson(path.join(endpointDir, "GET.responses", "001.response.json"), { type: "mock", status: 200, body: {} });
+  return workspace;
+}
+
+test("--engine-dir names the mocks folder unambiguously when it holds a /mocks endpoint", (t) => {
+  const workspace = createWorkspaceWithMocksEndpoint(t);
+  const engineDir = createFakeEngine(t, { script: fakeValidateCommand({ report: CLEAN_ENGINE_REPORT }) });
+
+  const result = validateWorkspace(workspace, { engineDir });
+
+  // Accepted only because the command validated the whole mocks folder, not mocks/mocks.
+  assert.equal(result.report.scriptContract.status, "checked", JSON.stringify(result.report.scriptContract));
+});
+
+test("--engine-dir refuses a report about another mocks folder", (t) => {
+  const workspace = createWorkspaceWithMocksEndpoint(t);
+  const validated = path.join(workspace, "mocks", "mocks");
+  const engineDir = createFakeEngine(t, {
+    script: fakeValidateCommand({ report: CLEAN_ENGINE_REPORT, pinnedMocksDir: validated }),
+  });
+
+  const result = validateWorkspace(workspace, { engineDir });
+
+  assert.equal(result.report.scriptContract.status, "not-checked");
+  assert.match(result.report.scriptContract.reason, /cannot be used: it validated another mocks folder \(.*mocks[\\/]mocks\), not /);
+  // Nothing is certified by a clean report about another folder: the local load takes over.
+  assert.equal(result.report.scriptsLoaded, true);
+  assert.equal(result.report.findings.some((finding) => finding.code != null), false);
+});
+
+test("--engine-dir refuses a report that does not name the folder it validated", (t) => {
+  const workspace = createScriptWorkspace([{ folder: "a", routePath: "/a", specifier: "#shared/flow.js" }]);
+  removeAfter(t, workspace);
+  const engineDir = createFakeEngine(t, {
+    script: `console.log(JSON.stringify(${JSON.stringify(CLEAN_ENGINE_REPORT)}, null, 2));\n`,
+  });
+
+  const result = validateWorkspace(workspace, { engineDir });
+
+  assert.equal(result.report.scriptContract.status, "not-checked");
+  assert.match(result.report.scriptContract.reason, /does not say which mocks folder was validated$/);
+});
+
+test("--server-url refuses a report about another mocks folder", async (t) => {
+  const workspace = createWorkspaceWithMocksEndpoint(t);
+  const mocksDir = fs.realpathSync(path.join(workspace, "mocks"));
+  const server = await startFakeServer(t, { mocksDir, reportedMocksDir: path.join(mocksDir, "mocks") });
+
+  const result = await validateWorkspaceWithEngine(workspace, { serverUrl: server.url });
+
+  assert.deepEqual(server.calls, ["GET /_admin/api/info", "POST /_admin/api/scripts/validate"]);
+  assert.equal(result.report.scriptContract.status, "not-checked");
+  assert.match(result.report.scriptContract.reason, /cannot be used: it validated another mocks folder/);
+  assert.equal(result.report.findings.some((finding) => finding.code != null), false);
+});
+
 // Against the real engine, when its checkout sits next to this repository (or MOCKXY_ENGINE_DIR
 // points at one): the fakes above cannot tell whether the two projects still agree.
 const realEngineDir = process.env.MOCKXY_ENGINE_DIR || path.join(__dirname, "..", "mockxy");
@@ -577,5 +660,19 @@ test("the real engine reports a late require as an error", { skip: !realEngineAv
   assert.deepEqual(
     result.report.findings.map((finding) => [finding.level, finding.file, finding.code]),
     [["error", "mocks/late/GET.responses/001.handler.js", "SCRIPT_LATE_REQUIRE"]]
+  );
+});
+
+test("the real engine checks the whole mocks folder when it holds a /mocks endpoint", { skip: !realEngineAvailable }, (t) => {
+  const workspace = createWorkspaceWithMocksEndpoint(t);
+
+  const result = validateWorkspace(workspace, { engineDir: realEngineDir });
+
+  assert.equal(result.report.scriptContract.status, "checked", JSON.stringify(result.report.scriptContract));
+  assert.equal(result.report.scripts, 1);
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(
+    result.report.findings.filter((finding) => finding.code != null).map((finding) => finding.code),
+    ["SCRIPT_LATE_REQUIRE"]
   );
 });

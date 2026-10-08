@@ -1087,6 +1087,31 @@ function isValidationReport(value) {
   return isPlainObject(value) && Array.isArray(value.errors) && Array.isArray(value.warnings);
 }
 
+function isSameFolder(left, right) {
+  return path.relative(realPath(left), realPath(right)) === "";
+}
+
+// A report counts only for the folder it says it validated. Whatever the transport, the engine
+// decides by itself which folder to read: a report about another one must never certify this one.
+function reportMismatch(engineReport, mocksDir) {
+  if (typeof engineReport.mocksDir !== "string") {
+    return "its report does not say which mocks folder was validated";
+  }
+  return isSameFolder(engineReport.mocksDir, mocksDir)
+    ? null
+    : `it validated another mocks folder (${engineReport.mocksDir}), not ${realPath(mocksDir)}`;
+}
+
+// The folder to hand to `node index.js validate`. The command takes a folder that contains a
+// `mocks` subfolder for a workspace root and validates that subfolder, and a mocks folder may
+// legitimately contain one: the endpoint `/mocks`. So a folder named `mocks` is named through its
+// parent, whose `mocks` subfolder is exactly that folder. For any other case reportMismatch is
+// the safeguard.
+function engineCommandTarget(mocksDir) {
+  const resolved = path.resolve(mocksDir);
+  return path.basename(resolved) === "mocks" ? path.dirname(resolved) : resolved;
+}
+
 function compareVersions(left, right) {
   const parts = (version) => String(version).split("-")[0].split(".").map((part) => Number.parseInt(part, 10) || 0);
   const [a, b] = [parts(left), parts(right)];
@@ -1115,7 +1140,7 @@ function parseCliReport(stdout) {
   return null;
 }
 
-// `node index.js validate <mocks> --json` of a Mockxy folder. An engine without the command would
+// `node index.js validate <folder> --json` of a Mockxy folder. An engine without the command would
 // take the arguments for a server start, so its presence is checked before running anything.
 function checkThroughEngineDir(engineDir, mocksDir) {
   const resolvedDir = path.resolve(engineDir);
@@ -1132,7 +1157,8 @@ function checkThroughEngineDir(engineDir, mocksDir) {
     );
   }
 
-  const run = childProcess.spawnSync(process.execPath, [entryPath, "validate", mocksDir, "--json"], {
+  const commandTarget = engineCommandTarget(mocksDir);
+  const run = childProcess.spawnSync(process.execPath, [entryPath, "validate", commandTarget, "--json"], {
     encoding: "utf8",
     timeout: ENGINE_VALIDATION_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
@@ -1146,6 +1172,10 @@ function checkThroughEngineDir(engineDir, mocksDir) {
     return notChecked(
       `the validate command of ${resolvedDir} printed no report (exit code ${run.status}${detail ? `: ${detail}` : ""})`
     );
+  }
+  const mismatch = reportMismatch(engineReport, mocksDir);
+  if (mismatch != null) {
+    return notChecked(`the validate command of ${resolvedDir} cannot be used: ${mismatch}`);
   }
   return {
     status: "checked",
@@ -1192,7 +1222,7 @@ async function checkThroughServer(serverUrl, mocksDir) {
   }
 
   const servedMocksDir = info?.workspace?.mocksDir;
-  if (typeof servedMocksDir !== "string" || path.relative(realPath(servedMocksDir), realPath(mocksDir)) !== "") {
+  if (typeof servedMocksDir !== "string" || !isSameFolder(servedMocksDir, mocksDir)) {
     return notChecked(
       `the Mockxy at ${base} serves another mocks folder (${servedMocksDir ?? "unknown"}), not ${realPath(mocksDir)}`
     );
@@ -1216,6 +1246,10 @@ async function checkThroughServer(serverUrl, mocksDir) {
     const engineReport = await response.json();
     if (!isValidationReport(engineReport)) {
       return notChecked(`POST ${base}/scripts/validate did not answer with a validation report`);
+    }
+    const mismatch = reportMismatch(engineReport, mocksDir);
+    if (mismatch != null) {
+      return notChecked(`the answer of POST ${base}/scripts/validate cannot be used: ${mismatch}`);
     }
     return {
       status: "checked",
