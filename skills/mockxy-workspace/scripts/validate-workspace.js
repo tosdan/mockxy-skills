@@ -11,8 +11,10 @@
 // Usage:
 //   node validate-workspace.js [path] [options]
 //
-//   path                 workspace root (the folder holding mockxy.json) or a mocks folder.
-//                        Defaults to the current directory.
+//   path                 workspace root: the folder holding mockxy.json and mocks/. Defaults to
+//                        the current directory. A mocks folder is accepted too, unless it could
+//                        be taken for a workspace root: then it is refused, not guessed.
+//   --mocks-dir <dir>    the mocks folder itself, with no interpretation (instead of path).
 //   --server-url <url>   a running Mockxy that serves this workspace: its full script validation
 //                        is used (POST /_admin/api/scripts/validate).
 //   --engine-dir <dir>   a Mockxy folder (the one holding index.js): its `validate` command is
@@ -1102,16 +1104,6 @@ function reportMismatch(engineReport, mocksDir) {
     : `it validated another mocks folder (${engineReport.mocksDir}), not ${realPath(mocksDir)}`;
 }
 
-// The folder to hand to `node index.js validate`. The command takes a folder that contains a
-// `mocks` subfolder for a workspace root and validates that subfolder, and a mocks folder may
-// legitimately contain one: the endpoint `/mocks`. So a folder named `mocks` is named through its
-// parent, whose `mocks` subfolder is exactly that folder. For any other case reportMismatch is
-// the safeguard.
-function engineCommandTarget(mocksDir) {
-  const resolved = path.resolve(mocksDir);
-  return path.basename(resolved) === "mocks" ? path.dirname(resolved) : resolved;
-}
-
 function compareVersions(left, right) {
   const parts = (version) => String(version).split("-")[0].split(".").map((part) => Number.parseInt(part, 10) || 0);
   const [a, b] = [parts(left), parts(right)];
@@ -1140,7 +1132,7 @@ function parseCliReport(stdout) {
   return null;
 }
 
-// `node index.js validate <folder> --json` of a Mockxy folder. An engine without the command would
+// `node index.js validate --mocks-dir <mocks> --json` of a Mockxy folder. An engine without the command would
 // take the arguments for a server start, so its presence is checked before running anything.
 function checkThroughEngineDir(engineDir, mocksDir) {
   const resolvedDir = path.resolve(engineDir);
@@ -1157,8 +1149,9 @@ function checkThroughEngineDir(engineDir, mocksDir) {
     );
   }
 
-  const commandTarget = engineCommandTarget(mocksDir);
-  const run = childProcess.spawnSync(process.execPath, [entryPath, "validate", commandTarget, "--json"], {
+  // `--mocks-dir` names the folder with no interpretation: a positional folder holding a `mocks`
+  // subfolder (the endpoint `/mocks`) could be read as a workspace root.
+  const run = childProcess.spawnSync(process.execPath, [entryPath, "validate", "--mocks-dir", mocksDir, "--json"], {
     encoding: "utf8",
     timeout: ENGINE_VALIDATION_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
@@ -1317,39 +1310,107 @@ function validateMarker(root) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-function resolveTarget(target) {
-  const resolved = path.resolve(target);
+// First endpoint file under `rootDir`, without entering `skippedDir`.
+function findEndpointFile(rootDir, skippedDir) {
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (_error) {
+      continue;
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (entryPath !== skippedDir && entry.name !== "node_modules" && !entry.name.startsWith(".")) {
+          stack.push(entryPath);
+        }
+      } else if (entry.isFile() && entry.name.endsWith(ENDPOINT_SUFFIX)) {
+        return entryPath;
+      }
+    }
+  }
+  return null;
+}
+
+// What, in a folder, belongs to a mocks folder and not to a workspace root, outside its `mocks`
+// subfolder. Returns the first sign found, or null.
+function findMocksFolderSign(folder) {
+  for (const name of [".collections.json", SHARED_DIR]) {
+    if (exists(path.join(folder, name))) {
+      return name;
+    }
+  }
+  const packagePath = path.join(folder, PACKAGE_FILE);
+  const imports = exists(packagePath) ? readJson(packagePath).value?.imports : null;
+  if (isPlainObject(imports) && Object.keys(imports).some((key) => key.startsWith("#shared"))) {
+    return `${PACKAGE_FILE} with the #shared alias`;
+  }
+  const endpointFile = findEndpointFile(folder, path.join(folder, "mocks"));
+  return endpointFile == null ? null : path.relative(folder, endpointFile).split(path.sep).join("/");
+}
+
+function asMocksFolder(mocksDir) {
+  const parent = path.dirname(mocksDir);
+  return { root: parent, mocksDir, filesDir: path.join(parent, "files"), checkMarker: false };
+}
+
+// Which workspace the argument names, with the same rules as the engine's validate command
+// (src/cli-validate.js). The positional argument may be a workspace root or a mocks folder, and a
+// mocks folder may itself contain a folder named `mocks`: the one of the endpoint `/mocks`. Read
+// as a root, only that endpoint would be validated and everything else declared fine unseen. So
+// the choice rests on facts only, and a folder that could be either is refused: `mocksDirOption`
+// (--mocks-dir) names the mocks folder with no interpretation.
+function resolveTarget(target, mocksDirOption) {
+  if (mocksDirOption != null) {
+    if (target != null) {
+      return { fatal: "pass either a path or --mocks-dir, not both" };
+    }
+    const mocksDir = path.resolve(mocksDirOption);
+    return isDirectory(mocksDir) ? asMocksFolder(mocksDir) : { fatal: `not a directory: ${mocksDir}` };
+  }
+
+  const resolved = path.resolve(target || process.cwd());
   if (!isDirectory(resolved)) {
     return { fatal: `not a directory: ${resolved}` };
   }
 
-  if (exists(path.join(resolved, "mockxy.json")) || isDirectory(path.join(resolved, "mocks"))) {
-    return {
-      root: resolved,
-      mocksDir: path.join(resolved, "mocks"),
-      filesDir: path.join(resolved, "files"),
-      checkMarker: true,
-    };
+  const asRoot = {
+    root: resolved,
+    mocksDir: path.join(resolved, "mocks"),
+    filesDir: path.join(resolved, "files"),
+    checkMarker: true,
+  };
+  if (exists(path.join(resolved, "mockxy.json"))) {
+    return asRoot;
+  }
+  // The `mocks` folder of a marked workspace is its mocks folder, whatever it contains.
+  if (path.basename(resolved) === "mocks" && exists(path.join(path.dirname(resolved), "mockxy.json"))) {
+    return asMocksFolder(resolved);
+  }
+  if (isDirectory(asRoot.mocksDir)) {
+    const sign = findMocksFolderSign(resolved);
+    return sign == null
+      ? asRoot
+      : {
+        fatal: `ambiguous folder: ${resolved} contains a "mocks" subfolder, as a workspace root does, but also ${sign}, as a mocks folder does. Pass the workspace root, or --mocks-dir ${resolved} to validate it as the mocks folder`,
+      };
   }
 
   // A mocks folder was passed directly (headless setups point MOCKS_DIR anywhere).
   if (listEndpointFiles(resolved).length > 0 || path.basename(resolved) === "mocks") {
-    const parent = path.dirname(resolved);
-    return {
-      root: parent,
-      mocksDir: resolved,
-      filesDir: path.join(parent, "files"),
-      checkMarker: false,
-    };
+    return asMocksFolder(resolved);
   }
 
   return { fatal: `${resolved} is neither a Mockxy workspace (no mockxy.json, no mocks/) nor a mocks folder` };
 }
 
-const VALUE_OPTIONS = { "--server-url": "serverUrl", "--engine-dir": "engineDir" };
+const VALUE_OPTIONS = { "--server-url": "serverUrl", "--engine-dir": "engineDir", "--mocks-dir": "mocksDir" };
 
 function parseArgs(argv) {
-  const options = { target: null, json: false, loadScripts: true, quiet: false, serverUrl: null, engineDir: null };
+  const options = { target: null, json: false, loadScripts: true, quiet: false, serverUrl: null, engineDir: null, mocksDir: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const [name, inlineValue] = arg.startsWith("--") && arg.includes("=")
@@ -1383,10 +1444,11 @@ function parseArgs(argv) {
 function printHelp() {
   process.stdout.write(
     [
-      "Usage: node validate-workspace.js [path] [--server-url <url>] [--engine-dir <dir>]",
-      "                                  [--json] [--no-scripts] [--quiet]",
+      "Usage: node validate-workspace.js [path | --mocks-dir <dir>] [--server-url <url>]",
+      "                                  [--engine-dir <dir>] [--json] [--no-scripts] [--quiet]",
       "",
-      "  path                Mockxy workspace root or mocks folder (default: current directory)",
+      "  path                Mockxy workspace root (default: current directory)",
+      "  --mocks-dir <dir>   the mocks folder itself, instead of path",
       "  --server-url <url>  running Mockxy serving this workspace: use its full script validation",
       "  --engine-dir <dir>  Mockxy folder (holding index.js): use its validate command, no server",
       "  --json              machine-readable report",
@@ -1433,7 +1495,7 @@ function resolveScriptContract(target, options, scripts) {
 
 function validateWorkspace(targetPath, options = {}) {
   findings.length = 0;
-  const target = resolveTarget(targetPath || process.cwd());
+  const target = resolveTarget(targetPath, options.mocksDir);
   if (target.fatal != null) {
     return { exitCode: 2, report: { ok: false, fatal: target.fatal } };
   }
@@ -1494,7 +1556,7 @@ async function validateWorkspaceWithEngine(targetPath, options = {}) {
   if (options.serverUrl == null || options.loadScripts === false) {
     return validateWorkspace(targetPath, options);
   }
-  const target = resolveTarget(targetPath || process.cwd());
+  const target = resolveTarget(targetPath, options.mocksDir);
   if (target.fatal != null) {
     return validateWorkspace(targetPath, options);
   }
@@ -1530,7 +1592,7 @@ async function main() {
     return 2;
   }
 
-  const result = await validateWorkspaceWithEngine(options.target || process.cwd(), options);
+  const result = await validateWorkspaceWithEngine(options.target, options);
   if (result.report.fatal != null) {
     if (options.json) {
       process.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);

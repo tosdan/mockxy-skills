@@ -32,6 +32,10 @@ belongs to the sibling skills:
    node <path-to-this-skill>/scripts/validate-workspace.js <workspace-path>
    ```
 
+   Pass the **workspace root**, the folder holding `mockxy.json` and `mocks/`. To validate a
+   mocks folder that has no workspace root around it, name it with `--mocks-dir <folder>` instead.
+   A folder that could be either one is refused, never guessed: follow the message.
+
    Fix every `ERROR` and re-run. Read `WARN` lines and decide: most of them mean the engine will
    silently ignore something you wrote. The script loads handler and middleware sources to check
    their exports, exactly as the engine does; pass `--no-scripts` to skip that.

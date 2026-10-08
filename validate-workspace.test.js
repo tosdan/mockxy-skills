@@ -391,19 +391,23 @@ function createFakeEngine(t, { version = "1.6.0", withCommand = true, script }) 
   return engineDir;
 }
 
-// The validate command of the engine, reduced to what matters here: it takes a folder holding a
-// `mocks` subfolder for a workspace root (src/cli-validate.js), and its report names the folder it
-// validated. `pinnedMocksDir` makes it report another folder, whatever it is asked.
+// The validate command of the engine, reduced to what matters here: `--mocks-dir` names the mocks
+// folder, a positional folder holding a `mocks` subfolder is read as a workspace root
+// (src/cli-validate.js), and the report names the folder that was validated. `pinnedMocksDir`
+// makes it report another folder, whatever it is asked.
 function fakeValidateCommand({ noise = false, report = ENGINE_REPORT, pinnedMocksDir = null } = {}) {
   return [
     "const fs = require('fs');",
     "const path = require('path');",
-    "const [command, target, flag] = process.argv.slice(2);",
-    "const nested = path.join(target, 'mocks');",
-    `const mocksDir = ${JSON.stringify(pinnedMocksDir)} || (fs.existsSync(nested) ? nested : target);`,
+    "const args = process.argv.slice(3);",
+    "const option = args.indexOf('--mocks-dir');",
+    "const positional = args.find((arg, index) => !arg.startsWith('--') && index !== option + 1);",
+    "const nested = positional == null ? null : path.join(positional, 'mocks');",
+    "const requested = option !== -1 ? args[option + 1] : fs.existsSync(nested) ? nested : positional;",
+    `const mocksDir = ${JSON.stringify(pinnedMocksDir)} || requested;`,
     noise ? "console.log('{');\nconsole.log('noise from a script');" : "",
     `const report = ${JSON.stringify(report)};`,
-    "console.log(JSON.stringify({ ...report, mocksDir, command, flag }, null, 2));",
+    "console.log(JSON.stringify({ ...report, mocksDir, json: args.includes('--json') }, null, 2));",
     "process.exitCode = report.ok ? 0 : 1;",
     "",
   ].join("\n");
@@ -571,12 +575,15 @@ test("--server-url says when the engine is too old or does not answer", async (t
   assert.match(silent.report.scriptContract.reason, /^no usable answer from http:\/\/127\.0\.0\.1:1\/_admin\/api\/info/);
 });
 
-// A mocks folder may contain a folder named `mocks`: the endpoint `/mocks`. The engine's command
-// reads a folder with a `mocks` subfolder as a workspace root, so handing it the mocks folder
-// would validate only that endpoint and certify the rest unseen.
-function createWorkspaceWithMocksEndpoint(t) {
+// A mocks folder may contain a folder named `mocks`: the endpoint `/mocks`. Read as a workspace
+// root, the mocks folder would be validated only in that endpoint and the rest certified unseen.
+// `marker: false` leaves mockxy.json out, as in a headless setup.
+function createWorkspaceWithMocksEndpoint(t, { marker = true } = {}) {
   const workspace = createScriptWorkspace([{ folder: "late", routePath: "/late", source: LATE_REQUIRE_HANDLER }]);
   removeAfter(t, workspace);
+  if (!marker) {
+    fs.rmSync(path.join(workspace, "mockxy.json"));
+  }
   const endpointDir = path.join(workspace, "mocks", "mocks");
   writeJson(path.join(endpointDir, "GET.endpoint.json"), {
     method: "GET",
@@ -588,6 +595,52 @@ function createWorkspaceWithMocksEndpoint(t) {
   writeJson(path.join(endpointDir, "GET.responses", "001.response.json"), { type: "mock", status: 200, body: {} });
   return workspace;
 }
+
+test("a mocks folder holding a /mocks endpoint is never read as a workspace root", (t) => {
+  const marked = createWorkspaceWithMocksEndpoint(t);
+  const headless = createWorkspaceWithMocksEndpoint(t, { marker: false });
+  const wholeFolder = (result, workspace) => {
+    assert.equal(result.report.fatal, undefined, result.report.fatal);
+    assert.equal(result.report.mocksDir, path.join(workspace, "mocks"));
+    assert.equal(result.report.endpoints, 2);
+    assert.equal(result.report.scripts, 1);
+  };
+
+  // Facts decide: the marker in the folder, or in the parent of a folder named `mocks`.
+  wholeFolder(validateWorkspace(marked), marked);
+  wholeFolder(validateWorkspace(path.join(marked, "mocks")), marked);
+  // Without a marker the root still holds nothing but `mocks/`, and --mocks-dir is explicit.
+  wholeFolder(validateWorkspace(headless), headless);
+  wholeFolder(validateWorkspace(null, { mocksDir: path.join(headless, "mocks") }), headless);
+
+  // The mocks folder itself could be either one: refused, not guessed.
+  const refused = validateWorkspace(path.join(headless, "mocks"));
+  assert.equal(refused.exitCode, 2);
+  assert.match(refused.report.fatal, /^ambiguous folder: .* contains a "mocks" subfolder, as a workspace root does, but also /);
+  assert.match(refused.report.fatal, /--mocks-dir /);
+
+  const both = validateWorkspace(marked, { mocksDir: path.join(marked, "mocks") });
+  assert.equal(both.report.fatal, "pass either a path or --mocks-dir, not both");
+});
+
+test("every sign of a mocks folder is enough to refuse a folder with a mocks subfolder", (t) => {
+  const signs = {
+    ".collections.json": (folder) => writeJson(path.join(folder, ".collections.json"), {}),
+    _shared: (folder) => fs.mkdirSync(path.join(folder, "_shared")),
+    "package.json with the #shared alias": (folder) => writeJson(path.join(folder, "package.json"), STANDARD_PACKAGE),
+    "other/GET.endpoint.json": (folder) => writeJson(path.join(folder, "other", "GET.endpoint.json"), {}),
+  };
+  for (const [sign, create] of Object.entries(signs)) {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "mockxy-skills-ambiguous-"));
+    removeAfter(t, folder);
+    fs.mkdirSync(path.join(folder, "mocks"));
+    assert.equal(validateWorkspace(folder).report.fatal, undefined);
+
+    create(folder);
+
+    assert.match(validateWorkspace(folder).report.fatal, new RegExp(`but also ${sign.replace(/[.#/]/g, "\\$&")}, as a mocks folder does`));
+  }
+});
 
 test("--engine-dir names the mocks folder unambiguously when it holds a /mocks endpoint", (t) => {
   const workspace = createWorkspaceWithMocksEndpoint(t);
@@ -666,13 +719,15 @@ test("the real engine reports a late require as an error", { skip: !realEngineAv
 test("the real engine checks the whole mocks folder when it holds a /mocks endpoint", { skip: !realEngineAvailable }, (t) => {
   const workspace = createWorkspaceWithMocksEndpoint(t);
 
-  const result = validateWorkspace(workspace, { engineDir: realEngineDir });
+  for (const target of [workspace, path.join(workspace, "mocks")]) {
+    const result = validateWorkspace(target, { engineDir: realEngineDir });
 
-  assert.equal(result.report.scriptContract.status, "checked", JSON.stringify(result.report.scriptContract));
-  assert.equal(result.report.scripts, 1);
-  assert.equal(result.exitCode, 1);
-  assert.deepEqual(
-    result.report.findings.filter((finding) => finding.code != null).map((finding) => finding.code),
-    ["SCRIPT_LATE_REQUIRE"]
-  );
+    assert.equal(result.report.scriptContract.status, "checked", JSON.stringify(result.report.scriptContract));
+    assert.equal(result.report.scripts, 1);
+    assert.equal(result.exitCode, 1);
+    assert.deepEqual(
+      result.report.findings.filter((finding) => finding.code != null).map((finding) => finding.code),
+      ["SCRIPT_LATE_REQUIRE"]
+    );
+  }
 });

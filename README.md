@@ -175,7 +175,9 @@ loading, so a format error shows up immediately instead of silently making an en
 node skills/mockxy-workspace/scripts/validate-workspace.js /path/to/workspace
 ```
 
-It accepts the workspace root or a `mocks/` folder directly. Options: `--json` for a
+Pass the workspace root, the folder holding `mockxy.json` and `mocks/`; `--mocks-dir <folder>`
+names a mocks folder directly instead. A folder that could be either one — it holds a `mocks`
+subfolder and mock files of its own — is refused rather than guessed. Other options: `--json` for a
 machine-readable report, `--no-scripts` to skip loading handler and middleware sources, `--quiet`
 for the summary only. It exits with 1 when it finds errors.
 

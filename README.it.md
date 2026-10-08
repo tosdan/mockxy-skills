@@ -176,7 +176,10 @@ endpoint:
 node skills/mockxy-workspace/scripts/validate-workspace.js /percorso/del/workspace
 ```
 
-Accetta la radice del workspace o direttamente una cartella `mocks/`. Opzioni: `--json` per un
+Si passa la radice del workspace, la cartella che contiene `mockxy.json` e `mocks/`;
+`--mocks-dir <cartella>` indica invece direttamente una cartella dei mock. Una cartella che
+potrebbe essere l'una o l'altra (contiene una sottocartella `mocks` e file di mock propri) viene
+rifiutata, non interpretata. Altre opzioni: `--json` per un
 report leggibile da programma, `--no-scripts` per non caricare i sorgenti di handler e middleware,
 `--quiet` per il solo riepilogo. Esce con codice 1 quando trova errori.
 
