@@ -28,36 +28,110 @@ module.exports = {
 ```
 
 A CommonJS module exporting an object with **`resolveResponse`** (sync or `async`). It may
-`require` other local files with relative paths: the engine tracks those dependencies and
-recompiles when the source **or one of its dependencies** changes on disk.
+`require` other local files, following [the script contract](#the-script-contract). Newer engines
+recompile every selected script, with its helpers, **at each reload**: a change to a helper is
+served from the next request, whatever its size or modification time.
+
+It must **not** declare `method`, `path` or `disabled`: routing belongs to the endpoint file, and
+their presence in the script is a validation error.
 
 ### Helpers shared across endpoints
 
-Code used by several handlers goes in a folder at the root of the mocks directory, by convention
-`_shared`, and the script imports it **from the mocks root** (newer engines; up to Mockxy 1.4.2
-only relative paths resolve):
+Code used by several scripts lives in **`<mocks>/_shared/`**, organized in subfolders as needed,
+and is imported with the **`#shared/`** alias:
 
 ```js
-const flow = require("_shared/payment-flow");
+const flow = require("#shared/payments/flow.js");
 
 module.exports = { resolveResponse: flow.cancel };
 ```
 
 The string is the same at any folder depth, so copying the endpoint to a route of a different
-depth keeps the reference valid. A relative path such as `"../../../_shared/payment-flow"` depends
-on the depth instead: it breaks when the endpoint changes level, and can silently resolve a
-different file with the same name.
+depth keeps the reference valid. It works in handlers, in middleware and inside the helpers
+themselves. A relative path such as `"../../../_shared/payments/flow.js"` stays valid but depends
+on the depth: it breaks when the endpoint changes level, and can silently resolve a different
+file with the same name.
 
-- Root imports apply to the **handler and middleware scripts** only. Helpers import each other
-  with relative paths (`require("./payment-data")` inside `_shared/`).
-- Packages in `node_modules` take precedence over the mocks root. `_shared` cannot collide with a
-  published npm package, because npm rejects names starting with `_`.
-- Moving or renaming a helper means updating every `require` that names it; with root imports the
-  string is identical in every script, so a single search and replace does it.
-- Changes to a helper are tracked like any other dependency and recompile the scripts using it.
+The alias is Node's native one, defined by the **`<mocks>/package.json`** file:
 
-It must **not** declare `method`, `path` or `disabled`: routing belongs to the endpoint file, and
-their presence in the script is a validation error.
+```json
+{
+  "private": true,
+  "type": "commonjs",
+  "imports": {
+    "#shared/*": "./_shared/*"
+  }
+}
+```
+
+A copy is in [`assets/mocks-package.json`](../assets/mocks-package.json).
+
+- **Write the file with the first script and commit it with the mocks.** The engine creates it at
+  the first script when it is missing, but only if the mocks folder is writable: on a read-only
+  workspace (a mounted volume, a container image) the scripts still load and only the `#shared/`
+  imports fail, with a message that says so.
+- **Never rewrite an existing file.** The engine uses it as it is. It must contain that `imports`
+  entry, no other key starting with `#shared`, and `type` absent or `"commonjs"`. Other aliases
+  are outside the contract.
+- **The extension is mandatory**: `#shared/flow.js`, not `#shared/flow`. An alias looks for
+  neither an extension nor an `index.js`.
+- **Node reads the file once per process, before the first script.** Adding it, or changing its
+  `imports` or `type`, while Mockxy has already loaded scripts of that workspace has no effect
+  until the process restarts — in the desktop app the whole app, not only the workspace. The
+  engine reports it as `SCRIPT_PACKAGE_RESTART_REQUIRED`: tell the user, do not work around it.
+- **A single `package.json` under `<mocks>/`.** One in a subfolder changes the scope of the alias
+  for the scripts below it.
+
+**Engine versions.** The alias needs a newer engine. Up to Mockxy 1.5.0 it does not exist: use
+relative paths, with the extension, which every version resolves. Mockxy 1.5.0 alone resolved
+`require("_shared/payments/flow")` from the mocks root; that form was withdrawn because it worked
+only in a script the engine loaded directly. Replace it with `require("#shared/payments/flow.js")`.
+
+### The script contract
+
+Because scripts are recompiled at every reload, a few rules keep that safe. They apply to
+handlers, middleware and helpers alike:
+
+| Aspect | Rule |
+|---|---|
+| Entry points | `*.handler.js` and `*.middleware.js` files are not imported by other scripts. Reusable logic is extracted into a helper. |
+| Local dependencies | `require` at the top of the module, with a literal path including the extension (`./data.js`, `#shared/flow.js`). No `require` inside a function, in an instance field of a class, after an `await` or with a computed path. |
+| Format | Scripts and helpers are CommonJS. A local ES module (`.mjs`) and `import()` of local code are outside the contract: Node never reloads them. |
+| State | `state` for the endpoint, `sharedState` across endpoints. Module variables hold functions, constants and configuration that does not change: a counter or a cache in a module does not survive a reload. |
+| Loading | Loading a module starts no timers, listeners or servers and writes nothing: it runs again at every reload. |
+| Boundary | Local code lives under `<mocks>/`. Node built-ins and npm packages are used normally, but are not reloaded. |
+
+The reason is the reload. A response function keeps the references it took when its module was
+loaded, so a request in flight ends with the code it started with. A `require` that runs during a
+request returns, after a reload, the new code in the middle of that request.
+
+A script that breaks a rule is **not blocked**: it still loads. Violations surface in three
+places:
+
+- **when saving through the admin API**, as `warnings` in the response — the script is saved;
+- **in `GET /runtime/status`**, as `warnings`, for what the engine sees while loading: a handler
+  imported by another script (`SCRIPT_ENTRYPOINT_IMPORTED`) or a problem with
+  `<mocks>/package.json` (`SCRIPT_PACKAGE_*`);
+- **in the full validation**, where they are errors. It loads every script, including those of
+  disabled endpoints and unselected variants, which a reload never loads:
+  `POST /_admin/api/scripts/validate` on a running engine, or `node index.js validate <workspace>`
+  in a Mockxy folder, with no server. The `mockxy-workspace` skill's validator calls either one
+  when told where the engine is.
+
+| Code | Meaning |
+|---|---|
+| `SCRIPT_LATE_REQUIRE` | a local `require` inside a function or an instance field |
+| `SCRIPT_DYNAMIC_REQUIRE` | `require` with a computed path |
+| `SCRIPT_REQUIRE_WITHOUT_EXTENSION` | a relative `require` without the file extension |
+| `SCRIPT_ESM_DEPENDENCY`, `SCRIPT_LOCAL_DYNAMIC_IMPORT` | a local ES module, or `import()` of local code |
+| `SCRIPT_ENTRYPOINT_IMPORTED` | a handler or middleware file imported by another script |
+| `SCRIPT_DEPENDENCY_OUTSIDE_WORKSPACE` | a local dependency outside the mocks folder |
+| `SCRIPT_PACKAGE_NESTED` | a `package.json` below the mocks root |
+| `SCRIPT_CONTRACT_NOT_ANALYZED` | the parser rejected the file: it is not certified as compliant |
+| `SCRIPT_LOAD_FAILED`, `SCRIPT_INVALID_EXPORT` | the script does not load, or exports the wrong shape |
+
+The parser reads the syntax, not the behavior: state kept in a module variable and effects at
+load time are rules it cannot see. Keeping them is up to whoever writes the script.
 
 ## The context it receives
 
@@ -152,4 +226,5 @@ per-endpoint degradation: a broken handler takes only its own endpoint out of se
 - Return explicit status codes for the error cases the client needs to exercise; a mock that only
   ever answers `200` teaches the frontend nothing.
 - Do not reach outside the workspace: no network calls, no absolute machine-specific paths, no
-  writes to disk. A handler is a fixture, and whoever opens the workspace runs it.
+  writes to disk. A handler is a fixture, and whoever opens the workspace runs it — and the engine
+  runs the top level of every script again at each reload and in the full validation.

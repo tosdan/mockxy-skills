@@ -11,18 +11,30 @@
 // Usage:
 //   node validate-workspace.js [path] [options]
 //
-//   path            workspace root (the folder holding mockxy.json) or a mocks folder.
-//                   Defaults to the current directory.
-//   --json          machine-readable report on stdout.
-//   --no-scripts    do not require() handler/middleware sources (skips the export check).
-//   --quiet         print only the summary line and the findings, no headers.
+//   path                 workspace root (the folder holding mockxy.json) or a mocks folder.
+//                        Defaults to the current directory.
+//   --server-url <url>   a running Mockxy that serves this workspace: its full script validation
+//                        is used (POST /_admin/api/scripts/validate).
+//   --engine-dir <dir>   a Mockxy folder (the one holding index.js): its `validate` command is
+//                        used, no server needed.
+//   --json               machine-readable report on stdout.
+//   --no-scripts         do not load handler/middleware sources (skips every script check).
+//   --quiet              print only the summary line and the findings, no headers.
 //
 // Exit code is 1 when at least one error is found, 0 otherwise.
 //
 // Severity follows the engine: a broken *selected* variant (or a variant referenced by the
 // selected sequence response) takes the endpoint down, so it is an error; a broken variant nobody
 // selected is inert until someone selects it, so it is a warning.
+//
+// Scripts. The format checks and the loading of scripts need nothing but Node. The *script
+// contract* (docs/en/HANDLER.md in the Mockxy repository: where and how a script may require
+// local code) needs a JavaScript parser and belongs to the engine, which checks it in its full
+// validation. This script does not replicate that analysis: it asks the engine when it is told
+// where one is, and otherwise says that the contract was not checked. It never looks for a
+// server by itself, and it uses one only after checking that it serves this workspace.
 
+const childProcess = require("child_process");
 const fs = require("fs");
 const Module = require("module");
 const path = require("path");
@@ -36,6 +48,19 @@ const RESERVED_QUERY_FOLDER_CHAR = "^";
 const SEQUENCE_ON_END_VALUES = new Set(["stay", "loop"]);
 const STREAM_ON_END_VALUES = new Set(["keep-open", "close", "loop"]);
 const RESPONSE_TYPES = new Set(["mock", "handler", "middleware", "sse", "ws", "sequence"]);
+const SCRIPT_FILE_PATTERN = /\.(handler|middleware)\.js$/;
+
+// The package of the workspace scripts (src/mocks/script-package.js): shared helpers are imported
+// with Node's native `#shared/` alias, defined by the `imports` field of mocks/package.json.
+const PACKAGE_FILE = "package.json";
+const SHARED_DIR = "_shared";
+const SHARED_ALIAS = "#shared/*";
+const SHARED_TARGET = `./${SHARED_DIR}/*`;
+const SHARED_PREFIX = "#shared/";
+const STANDARD_PACKAGE_TEXT = `{ "private": true, "type": "commonjs", "imports": { "${SHARED_ALIAS}": "${SHARED_TARGET}" } }`;
+const ENGINE_WITH_SCRIPT_VALIDATION = "1.6.0";
+const SERVER_INFO_TIMEOUT_MS = 5000;
+const ENGINE_VALIDATION_TIMEOUT_MS = 120000;
 
 // ---------------------------------------------------------------------------
 // Findings
@@ -55,8 +80,8 @@ function toRelative(filePath) {
   return relative.split(path.sep).join("/");
 }
 
-function report(level, filePath, message) {
-  findings.push({ level, file: filePath == null ? null : toRelative(filePath), message });
+function report(level, filePath, message, extra) {
+  findings.push({ level, file: filePath == null ? null : toRelative(filePath), ...extra, message });
 }
 
 function error(filePath, message) {
@@ -492,18 +517,88 @@ function validateWsVariant(response, errors) {
   validatePresets(response.presets, errors, { allowEventAndId: false });
 }
 
-// Compiles a handler/middleware script the way the engine does (src/mocks/script-loader.js): the
-// mocks folder is appended to the resolution paths, after node_modules, so the script can import
-// shared helpers from the mocks root (`require("_shared/helper")`) at any depth. Only the script
-// itself gets the extra path; the modules it requires resolve with plain Node rules. A default
-// ES export takes precedence, as in the engine.
-function loadScriptDefinition(sourcePath, mocksDir) {
+// Compiles a handler/middleware script the way the engine does (src/mocks/script-loader.js), with
+// plain Node resolution. The `#shared/` alias needs nothing here: Node reads it from
+// mocks/package.json for every module under the mocks folder. A default ES export takes
+// precedence, as in the engine.
+function loadScriptDefinition(sourcePath) {
   const scriptModule = new Module(sourcePath);
   scriptModule.filename = sourcePath;
-  scriptModule.paths = [...Module._nodeModulePaths(path.dirname(sourcePath)), path.resolve(mocksDir)];
+  scriptModule.paths = Module._nodeModulePaths(path.dirname(sourcePath));
   scriptModule._compile(fs.readFileSync(sourcePath, "utf8"), sourcePath);
   const exported = scriptModule.exports;
   return exported?.default || exported;
+}
+
+function isFile(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch (_error) {
+    return false;
+  }
+}
+
+// Explains the load failures an import of shared code usually produces, or returns null. Node
+// reports all of them as the same "Cannot find module": the conditions on disk tell them apart.
+// The engine has the complete diagnosis (explainScriptLoadError); these are the ordinary cases.
+function explainLoadError(loadError, mocksDir) {
+  const code = loadError?.code;
+  if (code === "ERR_INVALID_PACKAGE_CONFIG") {
+    return `${PACKAGE_FILE} of the mocks folder is not valid, so no script below it can be loaded`;
+  }
+  if (code !== "MODULE_NOT_FOUND" && code !== "ERR_PACKAGE_IMPORT_NOT_DEFINED") {
+    return null;
+  }
+  const specifier = /['"]([^'"]+)['"]/.exec(String(loadError.message || ""))?.[1];
+  if (specifier == null) {
+    return null;
+  }
+
+  // What Node could not find under the shared folder, as the alias a script would write.
+  const describeMissingShared = (rest) => {
+    const alias = `${SHARED_PREFIX}${rest}`;
+    const target = path.join(mocksDir, SHARED_DIR, ...rest.split("/"));
+    if (isFile(`${target}.js`)) {
+      return `${alias} has no extension: aliases do not add one, write ${alias}.js`;
+    }
+    if (isDirectory(target)) {
+      return `${alias} is a folder: aliases do not resolve index files, import the file explicitly (for example ${alias}/index.js)`;
+    }
+    return `${alias} does not exist: no file at ${toRelative(target)}`;
+  };
+
+  if (specifier.startsWith(SHARED_PREFIX)) {
+    if (!exists(path.join(mocksDir, PACKAGE_FILE))) {
+      return `${PACKAGE_FILE} is missing from the mocks folder, so the ${SHARED_PREFIX} alias is unavailable: create it with ${STANDARD_PACKAGE_TEXT}`;
+    }
+    const rest = specifier.slice(SHARED_PREFIX.length);
+    if (isFile(path.join(mocksDir, SHARED_DIR, ...rest.split("/")))) {
+      return `${PACKAGE_FILE} of the mocks folder does not define the standard ${SHARED_PREFIX} alias, or a nested ${PACKAGE_FILE} hides it from this script`;
+    }
+    return describeMissingShared(rest);
+  }
+
+  // With a working alias Node names the resolved path, not the specifier.
+  if (path.isAbsolute(specifier)) {
+    for (const sharedRoot of [path.join(realPath(mocksDir), SHARED_DIR), path.join(path.resolve(mocksDir), SHARED_DIR)]) {
+      const relative = path.relative(sharedRoot, specifier);
+      if (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+        return describeMissingShared(relative.split(path.sep).join("/"));
+      }
+    }
+    return null;
+  }
+
+  // The mocks-root import of Mockxy 1.5.0, `require("_shared/helper")`, was withdrawn.
+  if (specifier.startsWith(`${SHARED_DIR}/`)) {
+    const rest = specifier.slice(SHARED_DIR.length + 1);
+    const target = path.join(mocksDir, SHARED_DIR, ...rest.split("/"));
+    if (isFile(target) || isFile(`${target}.js`) || isDirectory(target)) {
+      const replacement = isFile(target) ? rest : isFile(`${target}.js`) ? `${rest}.js` : `${rest}/index.js`;
+      return `require("${specifier}") is the mocks-root import of Mockxy 1.5.0, which was removed: write require("${SHARED_PREFIX}${replacement}"), with the extension`;
+    }
+  }
+  return null;
 }
 
 function validateScriptVariant(response, responseDir, type, errors, options) {
@@ -525,9 +620,14 @@ function validateScriptVariant(response, responseDir, type, errors, options) {
   const requiredFunction = type === "handler" ? "resolveResponse" : "transformResponse";
   let definition;
   try {
-    definition = loadScriptDefinition(sourcePath, options.mocksDir);
+    definition = loadScriptDefinition(sourcePath);
   } catch (loadError) {
-    errors.push(`${response.sourceFile} could not be loaded: ${loadError.message}`);
+    const explanation = explainLoadError(loadError, options.mocksDir);
+    errors.push(
+      explanation == null
+        ? `${response.sourceFile} could not be loaded: ${loadError.message}`
+        : `${response.sourceFile} could not be loaded: ${explanation}. Original error: ${String(loadError.message).split("\n")[0]}`
+    );
     return sourcePath;
   }
   if (!isPlainObject(definition) || typeof definition[requiredFunction] !== "function") {
@@ -888,6 +988,274 @@ function validateDataFiles(filesDir, dataReferences) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Scripts: the package of the mocks folder (src/mocks/script-package.js)
+// ---------------------------------------------------------------------------
+
+// Every handler and middleware source under the mocks folder, selected or not: the same set the
+// engine's full validation loads. Also collects the package.json files below the root.
+function listScriptsAndNestedPackages(mocksDir) {
+  const scripts = [];
+  const nestedPackages = [];
+  if (!isDirectory(mocksDir)) {
+    return { scripts, nestedPackages };
+  }
+  const stack = [mocksDir];
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") {
+          stack.push(absolutePath);
+        }
+      } else if (entry.isFile() && SCRIPT_FILE_PATTERN.test(entry.name)) {
+        scripts.push(absolutePath);
+      } else if (entry.isFile() && entry.name === PACKAGE_FILE && currentDir !== mocksDir) {
+        nestedPackages.push(absolutePath);
+      }
+    }
+  }
+  return { scripts: scripts.sort(), nestedPackages: nestedPackages.sort() };
+}
+
+// An incompatible package is an error only when there are scripts depending on it, as in the
+// engine. A missing one is not an error: the engine creates it at the first script, when it can.
+function validateScriptPackage(mocksDir, scripts, nestedPackages) {
+  for (const nestedPackage of nestedPackages) {
+    error(
+      nestedPackage,
+      `a nested ${PACKAGE_FILE} changes the package scope of the scripts below it, so the ${SHARED_PREFIX} alias does not apply there: keep a single ${PACKAGE_FILE} at the root of the mocks folder`
+    );
+  }
+
+  const packagePath = path.join(mocksDir, PACKAGE_FILE);
+  const emit = scripts.length > 0 ? error : warn;
+  if (!exists(packagePath)) {
+    if (scripts.length > 0) {
+      warn(
+        packagePath,
+        `${PACKAGE_FILE} is missing: the engine creates it at the first script only when the mocks folder is writable, and without it ${SHARED_PREFIX} imports fail. Write it and commit it with the mocks: ${STANDARD_PACKAGE_TEXT}`
+      );
+    }
+    return;
+  }
+
+  const parsed = readJson(packagePath);
+  if (parsed.parseError != null || !isPlainObject(parsed.value)) {
+    emit(packagePath, parsed.parseError != null ? `invalid JSON: ${parsed.parseError}` : `${PACKAGE_FILE} must be a JSON object`);
+    return;
+  }
+
+  const { type, imports } = parsed.value;
+  if (type != null && type !== "commonjs") {
+    emit(packagePath, `"type" is ${JSON.stringify(type)}: set it to "commonjs" or remove it`);
+  }
+  if (!isPlainObject(imports) || imports[SHARED_ALIAS] !== SHARED_TARGET) {
+    emit(packagePath, `"imports" must contain ${JSON.stringify(SHARED_ALIAS)}: ${JSON.stringify(SHARED_TARGET)}`);
+  }
+  if (isPlainObject(imports)) {
+    const otherKeys = Object.keys(imports).filter((key) => key !== SHARED_ALIAS);
+    const reserved = otherKeys.filter((key) => key === "#shared" || key.startsWith(SHARED_PREFIX));
+    const extra = otherKeys.filter((key) => !reserved.includes(key));
+    if (reserved.length > 0) {
+      emit(packagePath, `"imports" redefines the reserved #shared namespace (${reserved.join(", ")}): remove those keys`);
+    }
+    if (extra.length > 0) {
+      warn(packagePath, `aliases outside the script contract (${extra.join(", ")}): only ${SHARED_PREFIX} is supported`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scripts: the engine's full validation (src/mocks/workspace-validation.js)
+// ---------------------------------------------------------------------------
+
+function notChecked(reason) {
+  return { status: "not-checked", reason };
+}
+
+function realPath(filePath) {
+  try {
+    return fs.realpathSync(filePath);
+  } catch (_error) {
+    return path.resolve(filePath);
+  }
+}
+
+function isValidationReport(value) {
+  return isPlainObject(value) && Array.isArray(value.errors) && Array.isArray(value.warnings);
+}
+
+function compareVersions(left, right) {
+  const parts = (version) => String(version).split("-")[0].split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const [a, b] = [parts(left), parts(right)];
+  for (let index = 0; index < 3; index += 1) {
+    if ((a[index] || 0) !== (b[index] || 0)) {
+      return (a[index] || 0) - (b[index] || 0);
+    }
+  }
+  return 0;
+}
+
+// The report is the last JSON document on stdout: the top level of a script may print before it.
+function parseCliReport(stdout) {
+  const lines = String(stdout || "").split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index] !== "{") {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(lines.slice(index).join("\n"));
+      return isValidationReport(parsed) ? parsed : null;
+    } catch (_error) {
+      // Not the start of the report: keep looking above.
+    }
+  }
+  return null;
+}
+
+// `node index.js validate <mocks> --json` of a Mockxy folder. An engine without the command would
+// take the arguments for a server start, so its presence is checked before running anything.
+function checkThroughEngineDir(engineDir, mocksDir) {
+  const resolvedDir = path.resolve(engineDir);
+  const entryPath = path.join(resolvedDir, "index.js");
+  const manifest = exists(path.join(resolvedDir, PACKAGE_FILE)) ? readJson(path.join(resolvedDir, PACKAGE_FILE)).value : null;
+  if (!exists(entryPath) || !isPlainObject(manifest) || manifest.name !== "mockxy") {
+    return notChecked(`${resolvedDir} is not a Mockxy folder (no index.js of the "mockxy" package)`);
+  }
+  const hasCommand = exists(path.join(resolvedDir, "src", "cli-validate.js"))
+    || compareVersions(manifest.version, ENGINE_WITH_SCRIPT_VALIDATION) >= 0;
+  if (!hasCommand) {
+    return notChecked(
+      `the Mockxy in ${resolvedDir} (${manifest.version}) has no validate command: it needs Mockxy ${ENGINE_WITH_SCRIPT_VALIDATION} or later`
+    );
+  }
+
+  const run = childProcess.spawnSync(process.execPath, [entryPath, "validate", mocksDir, "--json"], {
+    encoding: "utf8",
+    timeout: ENGINE_VALIDATION_TIMEOUT_MS,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (run.error != null) {
+    return notChecked(`the validate command of ${resolvedDir} could not run: ${run.error.message}`);
+  }
+  const engineReport = parseCliReport(run.stdout);
+  if (engineReport == null) {
+    const detail = String(run.stderr || "").trim().split(/\r?\n/).pop();
+    return notChecked(
+      `the validate command of ${resolvedDir} printed no report (exit code ${run.status}${detail ? `: ${detail}` : ""})`
+    );
+  }
+  return {
+    status: "checked",
+    via: "engine-dir",
+    source: resolvedDir,
+    engineVersion: typeof manifest.version === "string" ? manifest.version : null,
+    engineReport,
+  };
+}
+
+function adminApiBase(serverUrl) {
+  const url = new URL(serverUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("only http and https URLs are supported");
+  }
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${pathname.endsWith("/_admin/api") ? pathname : `${pathname}/_admin/api`}`;
+}
+
+// `POST /_admin/api/scripts/validate` of a running Mockxy, after checking through `GET /info` that
+// it serves this very mocks folder: another server on a local port is not the right one.
+async function checkThroughServer(serverUrl, mocksDir) {
+  if (typeof fetch !== "function") {
+    return notChecked("this Node version has no fetch(): use --engine-dir, or a newer Node");
+  }
+  let base;
+  try {
+    base = adminApiBase(serverUrl);
+  } catch (urlError) {
+    return notChecked(`--server-url is not a valid URL (${urlError.message})`);
+  }
+
+  let info;
+  try {
+    const response = await fetch(`${base}/info`, { signal: AbortSignal.timeout(SERVER_INFO_TIMEOUT_MS) });
+    if (!response.ok) {
+      return notChecked(
+        `${base}/info answered ${response.status}: the admin API is disabled or the engine is too old to say which workspace it serves`
+      );
+    }
+    info = await response.json();
+  } catch (requestError) {
+    return notChecked(`no usable answer from ${base}/info (${requestError.message})`);
+  }
+
+  const servedMocksDir = info?.workspace?.mocksDir;
+  if (typeof servedMocksDir !== "string" || path.relative(realPath(servedMocksDir), realPath(mocksDir)) !== "") {
+    return notChecked(
+      `the Mockxy at ${base} serves another mocks folder (${servedMocksDir ?? "unknown"}), not ${realPath(mocksDir)}`
+    );
+  }
+
+  try {
+    const response = await fetch(`${base}/scripts/validate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(ENGINE_VALIDATION_TIMEOUT_MS),
+    });
+    if (response.status === 404) {
+      return notChecked(
+        `the Mockxy at ${base} (${info.version ?? "unknown version"}) has no POST /scripts/validate: it needs Mockxy ${ENGINE_WITH_SCRIPT_VALIDATION} or later`
+      );
+    }
+    if (!response.ok) {
+      return notChecked(`POST ${base}/scripts/validate answered ${response.status}`);
+    }
+    const engineReport = await response.json();
+    if (!isValidationReport(engineReport)) {
+      return notChecked(`POST ${base}/scripts/validate did not answer with a validation report`);
+    }
+    return {
+      status: "checked",
+      via: "server",
+      source: base,
+      engineVersion: typeof info.version === "string" ? info.version : null,
+      engineReport,
+    };
+  } catch (requestError) {
+    return notChecked(`POST ${base}/scripts/validate failed (${requestError.message})`);
+  }
+}
+
+// The engine's findings, in the engine's own severity: in the full validation a contract
+// violation is an error, in a selected variant or not.
+function reportEngineFindings(engineCheck, mocksDir) {
+  const emitAll = (level, list) => {
+    for (const finding of list) {
+      if (!isPlainObject(finding) || typeof finding.message !== "string") {
+        continue;
+      }
+      const filePath = typeof finding.filePath !== "string"
+        ? null
+        : path.isAbsolute(finding.filePath) ? finding.filePath : path.join(mocksDir, ...finding.filePath.split("/"));
+      report(level, filePath, finding.message, {
+        ...(typeof finding.code === "string" ? { code: finding.code } : {}),
+        ...(Number.isInteger(finding.line) ? { line: finding.line, column: finding.column } : {}),
+      });
+    }
+  };
+  emitAll("error", engineCheck.engineReport.errors);
+  emitAll("warning", engineCheck.engineReport.warnings);
+  if (typeof engineCheck.engineReport.createdScriptPackagePath === "string") {
+    warn(
+      path.join(mocksDir, PACKAGE_FILE),
+      `the engine created this ${PACKAGE_FILE} (it enables the ${SHARED_PREFIX} alias): commit it with the mocks`
+    );
+  }
+}
+
 function validateMarker(root) {
   const markerPath = path.join(root, "mockxy.json");
   if (!exists(markerPath)) {
@@ -944,10 +1312,24 @@ function resolveTarget(target) {
   return { fatal: `${resolved} is neither a Mockxy workspace (no mockxy.json, no mocks/) nor a mocks folder` };
 }
 
+const VALUE_OPTIONS = { "--server-url": "serverUrl", "--engine-dir": "engineDir" };
+
 function parseArgs(argv) {
-  const options = { target: null, json: false, loadScripts: true, quiet: false };
-  for (const arg of argv) {
-    if (arg === "--json") {
+  const options = { target: null, json: false, loadScripts: true, quiet: false, serverUrl: null, engineDir: null };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const [name, inlineValue] = arg.startsWith("--") && arg.includes("=")
+      ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)]
+      : [arg, null];
+    if (VALUE_OPTIONS[name] != null) {
+      const value = inlineValue ?? argv[index + 1];
+      if (value == null || value === "" || (inlineValue == null && value.startsWith("--"))) {
+        options.missingValue = name;
+      } else {
+        options[VALUE_OPTIONS[name]] = value;
+      }
+      index += inlineValue == null ? 1 : 0;
+    } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--no-scripts") {
       options.loadScripts = false;
@@ -967,17 +1349,52 @@ function parseArgs(argv) {
 function printHelp() {
   process.stdout.write(
     [
-      "Usage: node validate-workspace.js [path] [--json] [--no-scripts] [--quiet]",
+      "Usage: node validate-workspace.js [path] [--server-url <url>] [--engine-dir <dir>]",
+      "                                  [--json] [--no-scripts] [--quiet]",
       "",
-      "  path          Mockxy workspace root or mocks folder (default: current directory)",
-      "  --json        machine-readable report",
-      "  --no-scripts  do not require() handler/middleware sources",
-      "  --quiet       findings and summary only",
+      "  path                Mockxy workspace root or mocks folder (default: current directory)",
+      "  --server-url <url>  running Mockxy serving this workspace: use its full script validation",
+      "  --engine-dir <dir>  Mockxy folder (holding index.js): use its validate command, no server",
+      "  --json              machine-readable report",
+      "  --no-scripts        do not load handler/middleware sources",
+      "  --quiet             findings and summary only",
+      "",
+      "Without --server-url or --engine-dir the scripts are loaded here and their exports checked,",
+      "but the script contract is not: the report says so.",
       "",
       "Exits with 1 when errors are found.",
       "",
     ].join("\n")
   );
+}
+
+// Who checked the scripts, and how far. `engineCheck` is the outcome of an engine validation
+// already attempted (the server one is asynchronous, so the caller awaits it first).
+function resolveScriptContract(target, options, scripts) {
+  if (options.loadScripts === false) {
+    return scripts.length === 0
+      ? { status: "not-needed" }
+      : notChecked("--no-scripts: handler and middleware sources were not loaded at all");
+  }
+  const attempts = [];
+  if (options.engineCheck != null) {
+    attempts.push(options.engineCheck);
+  }
+  if (attempts.every((attempt) => attempt.status !== "checked") && options.engineDir != null) {
+    attempts.push(checkThroughEngineDir(options.engineDir, target.mocksDir));
+  }
+  const checked = attempts.find((attempt) => attempt.status === "checked");
+  if (checked != null) {
+    return checked;
+  }
+  if (attempts.length > 0) {
+    return notChecked(attempts.map((attempt) => attempt.reason).join("; "));
+  }
+  return scripts.length === 0
+    ? { status: "not-needed" }
+    : notChecked(
+      "no engine was given; pass --server-url <url> of the Mockxy serving this workspace, or --engine-dir <Mockxy folder>"
+    );
 }
 
 function validateWorkspace(targetPath, options = {}) {
@@ -988,7 +1405,15 @@ function validateWorkspace(targetPath, options = {}) {
   }
 
   workspaceRoot = target.root;
-  const validationOptions = { loadScripts: options.loadScripts !== false, mocksDir: target.mocksDir };
+  const { scripts, nestedPackages } = listScriptsAndNestedPackages(target.mocksDir);
+  const scriptContract = resolveScriptContract(target, options, scripts);
+  const checkedByEngine = scriptContract.status === "checked";
+  // The engine's full validation loads every script and judges the package: doing it again here
+  // would run each script twice and report the same problem twice.
+  const validationOptions = {
+    loadScripts: options.loadScripts !== false && !checkedByEngine,
+    mocksDir: target.mocksDir,
+  };
 
   if (target.checkMarker) {
     validateMarker(target.root);
@@ -1004,9 +1429,15 @@ function validateWorkspace(targetPath, options = {}) {
   validateOrphanResponseFolders(target.mocksDir, referencedResponseFiles);
   validateCollections(target.mocksDir);
   validateDataFiles(target.filesDir, dataReferences);
+  if (checkedByEngine) {
+    reportEngineFindings(scriptContract, target.mocksDir);
+  } else {
+    validateScriptPackage(target.mocksDir, scripts, nestedPackages);
+  }
 
   const errorCount = findings.filter((finding) => finding.level === "error").length;
   const warningCount = findings.length - errorCount;
+  const { engineReport: _engineReport, ...scriptContractSummary } = scriptContract;
   return {
     exitCode: errorCount === 0 ? 0 : 1,
     report: {
@@ -1014,27 +1445,58 @@ function validateWorkspace(targetPath, options = {}) {
       workspace: target.root,
       mocksDir: target.mocksDir,
       endpoints: endpointCount,
+      scripts: scripts.length,
       errors: errorCount,
       warnings: warningCount,
       findings: [...findings],
-      scriptsLoaded: validationOptions.loadScripts,
+      scriptsLoaded: validationOptions.loadScripts || checkedByEngine,
+      scriptContract: scriptContractSummary,
     },
   };
 }
 
-function main() {
+// As validateWorkspace, asking a running Mockxy first when `serverUrl` is given.
+async function validateWorkspaceWithEngine(targetPath, options = {}) {
+  if (options.serverUrl == null || options.loadScripts === false) {
+    return validateWorkspace(targetPath, options);
+  }
+  const target = resolveTarget(targetPath || process.cwd());
+  if (target.fatal != null) {
+    return validateWorkspace(targetPath, options);
+  }
+  const engineCheck = await checkThroughServer(options.serverUrl, target.mocksDir);
+  return validateWorkspace(targetPath, { ...options, engineCheck });
+}
+
+function describeScripts(reportData) {
+  const { scriptContract } = reportData;
+  if (scriptContract.status === "checked") {
+    const engine = `Mockxy ${scriptContract.engineVersion ?? "of unknown version"}`;
+    const where = scriptContract.via === "server" ? `running at ${scriptContract.source}` : `in ${scriptContract.source}`;
+    return `checked by the engine (${engine} ${where}): loading, exports and script contract of every script`;
+  }
+  if (scriptContract.status === "not-needed") {
+    return "none in this workspace";
+  }
+  const done = reportData.scriptsLoaded ? "loaded here, exports checked" : "not loaded";
+  return `${done}; script contract NOT checked (${scriptContract.reason})`;
+}
+
+async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     printHelp();
     return 0;
   }
-  if (options.unknown != null) {
-    process.stderr.write(`Unknown option: ${options.unknown}\n`);
+  if (options.unknown != null || options.missingValue != null) {
+    process.stderr.write(
+      options.unknown != null ? `Unknown option: ${options.unknown}\n` : `Option ${options.missingValue} needs a value\n`
+    );
     printHelp();
     return 2;
   }
 
-  const result = validateWorkspace(options.target || process.cwd(), options);
+  const result = await validateWorkspaceWithEngine(options.target || process.cwd(), options);
   if (result.report.fatal != null) {
     if (options.json) {
       process.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);
@@ -1053,14 +1515,13 @@ function main() {
   if (!options.quiet) {
     lines.push(`Mockxy workspace: ${result.report.workspace}`);
     lines.push(`Endpoint files:   ${result.report.endpoints}`);
-    if (!options.loadScripts) {
-      lines.push("Scripts:          not loaded (--no-scripts): handler/middleware exports were not checked");
-    }
+    lines.push(`Scripts:          ${describeScripts(result.report)}`);
     lines.push("");
   }
   for (const finding of result.report.findings) {
     const tag = finding.level === "error" ? "ERROR" : "WARN ";
-    lines.push(`${tag} ${finding.file == null ? "" : `${finding.file}: `}${finding.message}`);
+    const location = finding.file == null ? "" : `${finding.file}${finding.line != null ? `:${finding.line}:${finding.column}` : ""}: `;
+    lines.push(`${tag} ${location}${finding.code != null ? `[${finding.code}] ` : ""}${finding.message}`);
   }
   if (result.report.findings.length > 0) {
     lines.push("");
@@ -1070,13 +1531,25 @@ function main() {
       ? `OK — ${result.report.endpoints} endpoint file(s), 0 errors, ${result.report.warnings} warning(s).`
       : `FAILED — ${result.report.errors} error(s), ${result.report.warnings} warning(s).`
   );
+  // In the summary too, so that --quiet cannot hide what was left unverified.
+  if (result.report.scriptContract.status === "not-checked") {
+    lines.push(`Script contract NOT checked — ${result.report.scriptContract.reason}.`);
+  }
   process.stdout.write(`${lines.join("\n")}\n`);
 
   return result.exitCode;
 }
 
-module.exports = { validateWorkspace };
+module.exports = { validateWorkspace, validateWorkspaceWithEngine };
 
 if (require.main === module) {
-  process.exitCode = main();
+  main().then(
+    (exitCode) => {
+      process.exitCode = exitCode;
+    },
+    (failure) => {
+      process.stderr.write(`${failure?.stack || failure}\n`);
+      process.exitCode = 2;
+    }
+  );
 }

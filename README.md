@@ -179,6 +179,21 @@ It accepts the workspace root or a `mocks/` folder directly. Options: `--json` f
 machine-readable report, `--no-scripts` to skip loading handler and middleware sources, `--quiet`
 for the summary only. It exits with 1 when it finds errors.
 
+The validator needs nothing but Node: it checks the format, loads handler and middleware scripts
+and checks what they export. The **script contract** (where and how a script may `require` local
+code) is checked by the Mockxy engine, which has the parser for it. Tell the validator where an
+engine is and it uses that engine's full validation; otherwise the report states that the contract
+was not checked.
+
+```sh
+# a running Mockxy, used only if it serves this very workspace
+node skills/mockxy-workspace/scripts/validate-workspace.js /path/to/workspace --server-url http://127.0.0.1:3000
+# a Mockxy folder, with no server
+node skills/mockxy-workspace/scripts/validate-workspace.js /path/to/workspace --engine-dir /path/to/mockxy
+```
+
+Both need an engine newer than Mockxy 1.5.0. The validator never looks for a server by itself.
+
 ## Repository layout
 
 ```text

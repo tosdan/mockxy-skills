@@ -75,12 +75,47 @@ A CommonJS module exporting an object with **`resolveResponse`** (sync or `async
   most one of `jsonBody` and `body`; neither means no body.
 - The script must **not** declare `method`, `path` or `disabled`: routing belongs to the endpoint
   file, and declaring them is a validation error.
-- Code shared by several handlers lives in `<mocks>/_shared/` and is imported from the mocks root,
-  `require("_shared/<helper>")`, never with a depth-dependent `../../` path (newer engines; up to
-  Mockxy 1.4.2 only relative paths resolve). Helpers import each other relatively.
+- Code shared by several scripts lives in `<mocks>/_shared/` and is imported with the `#shared/`
+  alias, never with a depth-dependent `../../` path — see
+  [Shared helpers and the script contract](#shared-helpers-and-the-script-contract).
 
 Full contract, error handling, timeouts and limits:
 [references/handler-contract.md](references/handler-contract.md).
+
+## Shared helpers and the script contract
+
+```js
+const flow = require("#shared/payments/flow.js");
+
+module.exports = { resolveResponse: flow.cancel };
+```
+
+`#shared/` is Node's native alias for `<mocks>/_shared/`, defined by **`<mocks>/package.json`**.
+Before writing the first script of a workspace, check that file: when it is missing, create it as
+an exact copy of [assets/mocks-package.json](assets/mocks-package.json); when it exists, leave it
+as it is. The alias works the same in handlers, middleware and helpers, at any folder depth.
+
+Newer engines only: up to Mockxy 1.5.0 there is no alias, so use a relative path with its
+extension, which every version resolves. The `require("_shared/<helper>")` form of Mockxy 1.5.0
+was withdrawn: replace it wherever you find it.
+
+The engine recompiles the scripts at every reload. Every script — handler, middleware or helper —
+follows these rules, so that a request in flight ends with the code it started with:
+
+- **Local `require` at the top of the module**, with a literal path that includes the extension
+  (`./data.js`, `#shared/flow.js`). Never inside a function, in an instance field of a class,
+  after an `await` or with a computed path.
+- **Handler and middleware files are entry points**: no script imports them. Logic that two
+  endpoints need goes into a helper.
+- **CommonJS only**: no local `.mjs` file and no `import()` of local code.
+- **State lives in `state` and `sharedState`**, never in module variables: a counter or a cache
+  kept in a module is lost at the next reload.
+- **Loading a module has no effects**: no timers, listeners, servers or writes at the top level.
+- **Local code stays under `<mocks>/`.**
+
+A script that breaks a rule still loads: the engine reports it as a warning and its full
+validation as an error. Reasons, the package file and the diagnostics:
+[references/handler-contract.md](references/handler-contract.md#helpers-shared-across-endpoints).
 
 ## Shared state across handlers
 
@@ -145,6 +180,9 @@ dataset is editable without touching code, and both travel in git.
   `middleware`, and the file exists in the same responses folder.
 - The script exports `resolveResponse` (handler) or `transformResponse` (middleware).
 - The script declares no `method`, `path` or `disabled`.
+- Every local `require` is at the top of its module, with a literal path and the extension;
+  shared helpers are imported with `#shared/…`, and `<mocks>/package.json` exists.
+- No script imports a handler or middleware file, and no module variable holds state.
 - At most one of `jsonBody` and `body` is returned, and `status` — when given — is 100–599.
 - Every `data("name")` in the script has a matching `files/name.json`, lowercase.
 - Every shared resource is opened with the same canonical name and `seedKey` in all participating
@@ -152,4 +190,6 @@ dataset is editable without touching code, and both travel in git.
 - Shared-state mutators are synchronous and do not call any shared-state operation from inside
   initializer or mutator callbacks.
 - Validate the workspace with the `mockxy-workspace` skill's `scripts/validate-workspace.js`,
-  which loads the scripts and checks their exports, and fix every error.
+  which loads the scripts and checks their exports, and fix every error. The script contract is
+  checked by the engine: pass `--server-url` or `--engine-dir` when a Mockxy that has the full
+  validation is at hand, and otherwise tell the user that the contract was not verified.

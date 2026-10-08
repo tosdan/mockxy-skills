@@ -180,6 +180,22 @@ Accetta la radice del workspace o direttamente una cartella `mocks/`. Opzioni: `
 report leggibile da programma, `--no-scripts` per non caricare i sorgenti di handler e middleware,
 `--quiet` per il solo riepilogo. Esce con codice 1 quando trova errori.
 
+Al validatore basta Node: controlla il formato, carica gli script handler e middleware e verifica
+ciò che esportano. Il **contratto degli script** (dove e come uno script può fare `require` di
+codice locale) lo controlla il motore Mockxy, che ha il parser adatto. Indicando al validatore
+dove si trova un motore, usa la validazione completa di quel motore; altrimenti il report dichiara
+che il contratto non è stato controllato.
+
+```sh
+# un Mockxy in esecuzione, usato solo se serve proprio questo workspace
+node skills/mockxy-workspace/scripts/validate-workspace.js /percorso/del/workspace --server-url http://127.0.0.1:3000
+# una cartella di Mockxy, senza server
+node skills/mockxy-workspace/scripts/validate-workspace.js /percorso/del/workspace --engine-dir /percorso/di/mockxy
+```
+
+Entrambe richiedono un motore successivo a Mockxy 1.5.0. Il validatore non cerca mai un server
+per conto suo.
+
 ## Struttura del repository
 
 ```text
