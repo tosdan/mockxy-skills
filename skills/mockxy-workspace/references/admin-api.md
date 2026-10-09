@@ -43,8 +43,9 @@ the update needed. To prepare a whole scenario for a test, see [scenario-setup.m
 - Mutations accept **explicit JSON only** (`content-type: application/json`); the OpenAPI import
   also accepts YAML but rejects `text/plain` with `415`.
 - Parameterless POST operations still require an actual JSON body exactly equal to `{}`. This
-  applies to sequence reset, monitor dump flush, and both shared-state reset routes. A missing or
-  empty body returns `400` after a valid JSON media type; a missing/wrong media type returns `415`.
+  applies to sequence reset, monitor dump flush, the script validation and both shared-state reset
+  routes. A missing or empty body returns `400` after a valid JSON media type; a missing/wrong
+  media type returns `415`.
 
 ## Conventions
 
@@ -138,6 +139,13 @@ sequence are immediate actions without a precondition. A present but invalid `ex
 | `PUT /mocks/:id/responses/:file/file` | uploads the raw bytes of a file-backed variant — `application/octet-stream` up to 12 MB, with `?contentType=…&filename=…` |
 | `DELETE /mocks/:id/responses/:file` | deletes a variant; a sequence target is protected with `409` and `details.referencedBy` |
 
+**Script warnings.** Saving a handler or middleware variant on a newer engine may answer `2xx`
+with a `warnings` list of `{ code, line?, column?, message }`: the script is saved and served, but
+it breaks the script contract (the `mockxy-dynamic-mock` skill lists the rules and the codes), and
+`POST /scripts/validate` would report the same findings as errors. Fix the source and save again.
+The field is absent when there is nothing to report. A source that does not compile, or an import
+that does not resolve, still fails the write with `400`.
+
 **Prepare, then activate.** When the user wants a variant ready but not yet serving (an error case
 to switch on later, a revised step), create it with `select: false`: the current response, the
 sequence cursor and the handler memory stay as they are, and the variant is validated like any
@@ -196,7 +204,8 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `GET /info` | who answers and on what — `version`, `runtimeId` (new at every start), `workspace` (`id` and canonical `mocksDir`, `filesDir`, `root`), `listener`, `watcher` and `revisions` (`catalog`, `server`, `dump`, `diagnostics`, `config`) that grow when the resource changes; cheap to poll |
 | `GET /config` | startup, effective and overridden configuration — `{ runtimeId, startup, effective, overrides, persisted }` with the nine runtime settings (`backendUrl` is `null` without a backend); no other environment variable |
 | `PATCH /config` | overrides the nine settings until the engine restarts — `{ set?, unset? }` ([Runtime configuration](#runtime-configuration)) |
-| `GET /runtime/status` | outcome of the last load of the workspace, `200` even when degraded or failed — `lastAttempt` (`reasons` among `startup`, `admin`, `watcher`; `status` `applied`, `degraded` or `failed`), per-file `errors` with `serving: retained` (previous version still served) or `missing`, and `fatalError`; only the last attempt |
+| `GET /runtime/status` | outcome of the last load of the workspace, `200` even when degraded or failed — `lastAttempt` (`reasons` among `startup`, `admin`, `watcher`; `status` `applied`, `degraded` or `failed`), per-file `errors` with `serving: retained` (previous version still served) or `missing`, and `fatalError`; only the last attempt. Newer engines add `warnings` (`code`, `endpointId`, `filePath`, `message`): problems that do not prevent loading and do not change `status` — a handler or middleware imported by another script, or `mocks/package.json` missing, incompatible or changed after the scripts were loaded (`SCRIPT_PACKAGE_RESTART_REQUIRED`: only a restart of Mockxy applies it) |
+| `POST /scripts/validate` | full validation of the workspace scripts (newer engines; check that `GET /openapi.yaml` declares `validateWorkspaceScripts`) — body `{}`. Loads **every** handler and middleware, including those of disabled endpoints and unselected variants, and answers `200` with `{ ok, mocksDir, scripts, errors, warnings }`; each finding has `code`, `filePath` relative to the mocks folder, `line` and `column` when it points at the source, and `message`. Script-contract violations are errors here. It runs the top level of every script, but installs no routes and leaves handler memory, shared state, sequences and streams alone |
 | `GET /openapi.yaml` | the OpenAPI contract of the running version, as `application/yaml` |
 
 ## Reading the monitor

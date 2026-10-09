@@ -48,6 +48,10 @@ workspaces.
   (`src/mocks/endpoint-loader.js` and the modules it uses in the Mockxy repository). When Mockxy
   changes a validation rule, the references and `scripts/validate-workspace.js` must change with
   it.
+- The **script contract** (how a script may `require` local code) is analyzed by the engine with
+  a JavaScript parser. `scripts/validate-workspace.js` stays dependency-free: it delegates that
+  analysis to an engine it is told about and declares when it could not. Do not re-implement it
+  here, and never approximate it with regular expressions.
 - Prefer stating the rule the engine enforces over describing what the UI happens to do.
 - Never document a field the loader ignores without saying so.
 

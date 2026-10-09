@@ -2,6 +2,11 @@
 // reference it from the matching <NNN>.response.json ({ "type": "handler", "sourceFile": ... }).
 //
 // Do not declare method, path or disabled here: routing belongs to the endpoint file.
+//
+// Local code is required here, at the top, with a literal path and the extension; helpers shared
+// by several endpoints live in <mocks>/_shared/ (the alias needs <mocks>/package.json):
+// const flow = require("#shared/flow.js");
+// Keep no state in module variables: use state and sharedState.
 module.exports = {
   // Context: params, query, requestHeaders, bodyBuffer, bodyText, jsonBody,
   //          data, sharedState, state, callCount, firstRequestAt, req.

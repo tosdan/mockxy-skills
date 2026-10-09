@@ -32,9 +32,32 @@ belongs to the sibling skills:
    node <path-to-this-skill>/scripts/validate-workspace.js <workspace-path>
    ```
 
+   Pass the **workspace root**, the folder holding `mockxy.json` and `mocks/`. To validate a
+   mocks folder that has no workspace root around it, name it with `--mocks-dir <folder>` instead.
+   A folder that could be either one is refused, never guessed: follow the message.
+
    Fix every `ERROR` and re-run. Read `WARN` lines and decide: most of them mean the engine will
-   silently ignore something you wrote. The script `require()`s handler and middleware sources to
-   check their exports, exactly as the engine does; pass `--no-scripts` to skip that.
+   silently ignore something you wrote. The script loads handler and middleware sources to check
+   their exports, exactly as the engine does; pass `--no-scripts` to skip that.
+
+   When the workspace has scripts, read the `Scripts:` line too. The **script contract** (where
+   and how a script may `require` local code — see `mockxy-dynamic-mock`) is checked by the engine,
+   not by this script. Say where an engine with the full validation is, when there is one:
+
+   ```sh
+   # a running Mockxy: used only if GET /info says it serves this very workspace
+   node <path-to-this-skill>/scripts/validate-workspace.js <workspace-path> --server-url http://127.0.0.1:3000
+   # a Mockxy folder (the one holding index.js), with no server
+   node <path-to-this-skill>/scripts/validate-workspace.js <workspace-path> --engine-dir <mockxy-folder>
+   ```
+
+   Both run the top level of every script of the workspace once, change nothing that is served,
+   and need a newer engine (after Mockxy 1.5.0). Like the engine at its first load, `--engine-dir`
+   creates `mocks/package.json` when the workspace has scripts and the file is missing; the
+   report says so. Without one the report ends with
+   `Script contract NOT checked`: repeat that to the user instead of calling the scripts verified.
+   Never guess a port: use `--server-url` only with an address the user gave you or that you
+   started yourself at their request.
 
 ## Layout
 
@@ -44,6 +67,8 @@ my-workspace/
 ├── .gitignore               # must ignore .mockxy/                  (shared)
 ├── mocks/                   # endpoint definitions                  (shared)
 │   ├── .collections.json    # optional catalog grouping for the UI
+│   ├── package.json         # only with scripts: defines the #shared/ alias
+│   ├── _shared/             # only with scripts: helpers used by several endpoints
 │   └── api/users/{id}/
 │       ├── GET.endpoint.json
 │       └── GET.responses/
@@ -58,6 +83,11 @@ create, edit or commit it.
 
 To initialize a new workspace: create `mockxy.json` with `{ "formatVersion": 1 }`, the empty
 `mocks/` and `files/` folders, and add `.mockxy/` to `.gitignore`.
+
+`mocks/package.json` and `mocks/_shared/` belong to handler and middleware scripts: the
+`mockxy-dynamic-mock` skill says when to create them. Never edit an existing `mocks/package.json`
+and never add another `package.json` below `mocks/`: Node reads it once per process, so a change
+needs a restart of Mockxy, and a nested one breaks the alias for the scripts under it.
 
 ## The endpoint file
 
@@ -157,3 +187,5 @@ which includes a Playwright example.
 - No two endpoints declare the same method+path.
 - `path` uses `:param`, folders use `{param}`.
 - The validator exits 0, and each remaining warning is either fixed or explained to the user.
+- With scripts in the workspace: the `Scripts:` line says the engine checked them, or the user has
+  been told that the script contract was not verified.
