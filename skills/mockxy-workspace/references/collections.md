@@ -53,6 +53,10 @@ string works.
   dead weight.
 - When you move or rename an endpoint folder, update its membership and `childOrder` keys too.
 - Do not invent memberships the user did not ask for. Leaving endpoints unsorted is normal.
+- Do not label a collection `Unsorted` or `Non assegnati`: they are the English and Italian names
+  of the virtual collection, so in the UI such a collection would look like a second one. The
+  engine loads a file that uses them, but refuses them when a collection is created through the
+  admin API (`Non assegnati` from Mockxy 1.7.0).
 - If the workspace already has a `.collections.json`, read it and merge; never overwrite it with a
   freshly generated one, or you will discard the user's manual ordering.
 

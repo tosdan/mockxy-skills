@@ -173,7 +173,7 @@ serves it with another type, middleware included. They do not wait for queued mu
 
 | Method and path | What it does |
 |---|---|
-| `POST /mocks/collections` | creates a collection, nested too |
+| `POST /mocks/collections` | creates a collection, nested too. The names of the virtual collection of unassigned endpoints are reserved, case and accents ignored: `Unsorted`, and from Mockxy 1.7.0 also `Non assegnati` (its Italian name). A reserved name answers `409`; Mockxy 1.7.0 and later add `details.code: COLLECTION_LABEL_RESERVED` and `details.reservedLabels` |
 | `PATCH /mocks/collections/order` | reorders sibling collections — `{ collectionIds, parentId? }`, each sibling exactly once |
 | `PATCH /mocks/collections/:id/items/order` | reorders the endpoints of a collection — `{ itemIds }`, each endpoint exactly once |
 | `PATCH /mocks/collections/:parentKey/children/order` | reorders everything directly under a parent (`root`, `unsorted` or a collection id), endpoints and sub-collections interleaved — `{ childRefs }`, each child exactly once |
@@ -193,8 +193,8 @@ serves it with another type, middleware included. They do not wait for queued mu
 | `GET /monitoring/dump` | state of the on-disk dump of captured traffic, with the `maxFileBytes` and `maxTotalBytes` limits in newer engines |
 | `PATCH /monitoring/dump` | turns the dump on or off and tunes it at runtime — `{ enabled?, intervalMs?, threshold?, maxFileBytes?, maxTotalBytes? }`, validated as a whole before any field applies; only traffic captured after it is enabled is written. The limits (newer engines; older ones ignore them) apply from the next write, rotation or pruning and last until the engine restarts; `maxTotalBytes: 0` disables pruning |
 | `POST /monitoring/dump/flush` | flushes pending monitor entries — body `{}` |
-| `GET /monitoring/dumps` | lists the dump files |
-| `GET /monitoring/dumps/read?fileIndex&lineIndex&limit` | reads the dumps page by page, oldest first; every item carries a `dumpKey`; keep passing `nextCursor` until `done` |
+| `GET /monitoring/dumps` | lists the dump files, oldest first. From Mockxy 1.7.0 the order is by capture session, then by rotation number (`dump-STAMP.ndjson`, `dump-STAMP-002.ndjson`…); older engines sort the names as text, which puts the first file of a session after its rotated ones |
+| `GET /monitoring/dumps/read?fileIndex&lineIndex&limit` | reads the dumps page by page, oldest first; every item carries a `dumpKey`; keep passing `nextCursor` until `done`, as received. Mockxy 1.7.0 and later add: `byteOffset` in the cursor, to resume without re-reading the file; filters in AND over the whole archive — `q` (text in the URL or the method), `method`, `status` (classes, `2,4`), `source` (or `real-backend`: not served by a mock, handler, SSE or WebSocket) — with `limit` counting matches, and a page that may come back short or empty with `done: false` once it has scanned 20,000 lines; `order=desc` to read from the newest entry, same `dumpKey`s, reading the archive as it was at the first page. Check that `GET /openapi.yaml` declares these parameters before relying on them |
 | `POST /monitoring/dumps/create-mocks` | creates mocks in bulk from captured traffic — `{ file }` for a whole dump file or `{ keys }` with `dumpKey` values, plus the options of the monitor route, optional here with the historical defaults (`skip`, no selection, new endpoints enabled). Read `items` and `runtime` as described in [Creating mocks from traffic](#creating-mocks-from-traffic) |
 | `DELETE /monitoring/dumps/:file` | deletes one dump file |
 | `GET /runtime/shared-state` | metadata, usage and limits of handler shared state; never values |
