@@ -117,14 +117,14 @@ sequence are immediate actions without a precondition. A present but invalid `ex
 |---|---|
 | `GET /mocks` | the whole catalog: endpoints, collections and orderings. Endpoint files that fail to load are reported in `loadErrors` instead of failing the request |
 | `GET /mocks/resolve?method&path` | which endpoint would cover a concrete request today, disabled ones included; `{ mock: null }` if none |
-| `POST /mocks` | creates an endpoint. If one already exists for method+path it answers `409` with `details.existingMockId`, so you can add a variant to that endpoint instead |
+| `POST /mocks` | creates an endpoint. If one already exists for method+path it answers `409` with `details: { code: "ENDPOINT_EXISTS", existingMockId }`, so you can add a variant to that endpoint instead |
 | `GET /mocks/:id` | endpoint detail and variants; when the selected response is a sequence it also exposes `sequence` and `sequenceState`. `409` with `details: { code: "READ_INCONSISTENT", retryable: true }` means a file was missing while the endpoint was read: repeat the read **once**; if it fails again, report the detail as unreadable and write nothing based on it |
 | `PUT /mocks/:id` | selects `{ selectedResponseFile }`, or updates the selected ordinary response; legacy `{ sequence }` bodies are rejected |
 | `GET /mocks/:id/sequence/state` | selected sequence filename and live cursor; `400` when another response type is selected |
 | `POST /mocks/:id/sequence/reset` | resets the selected sequence cursor and handler memory — body `{}`; shared runtime state is unchanged |
 | `PUT /mocks/:id/endpoint` | updates `description` and/or `enabled`; method and path are immutable. Send **only the field you change**: resending a value read earlier overwrites a change made meanwhile. Protect a description edit with `expectedRevision` ([Editing with a precondition](#editing-with-a-precondition)) |
 | `PATCH /mocks/enabled` | enables or disables a list of endpoints — `{ ids, enabled }` with a non-empty `ids`; an unknown id fails the request before anything is written; answers with the refreshed catalog |
-| `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure |
+| `POST /mocks/:id/copy` | duplicates onto a new method+path — `{ method, path, copyResponses }`; a selected sequence copied alone brings its minimum step closure. A taken method+path answers `409` with `details: { code: "ENDPOINT_EXISTS", existingMockId }`, the dry run too |
 | `POST /mocks/:id/copy?dryRun=true` | read-only copy plan (`200`) with response files, assets, literal shared-state references and warnings; the real copy recalculates and returns `201` |
 | `PUT /mocks/:id/collection` | assigns the endpoint to a collection |
 | `DELETE /mocks/:id` | deletes endpoint and variants |
